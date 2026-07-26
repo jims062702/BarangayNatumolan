@@ -1,6 +1,20 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { FiHome, FiTrendingUp, FiUserPlus, FiUsers } from "react-icons/fi";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  LabelList,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { api } from "../../lib/api";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -18,27 +32,16 @@ interface Analytics {
   events_this_year: { event_type: string; count: number }[];
 }
 
-function DistributionList({ data }: { data: Record<string, number> }) {
-  const max = Math.max(1, ...Object.values(data));
-  return (
-    <ul className="space-y-2.5">
-      {Object.entries(data).map(([label, count]) => (
-        <li key={label}>
-          <div className="mb-1 flex justify-between text-xs">
-            <span className="font-medium text-dark">{label}</span>
-            <span className="text-gray-500">{count}</span>
-          </div>
-          <div className="h-2 overflow-hidden rounded-full bg-gray">
-            <div
-              className="h-full rounded-full bg-primary"
-              style={{ width: `${(count / max) * 100}%` }}
-            />
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
+// Magnitude = one brand hue. Sex = categorical (CVD-validated: purple/teal/amber).
+const PRIMARY = "#723EC3";
+const GENDER_COLORS: Record<string, string> = {
+  Male: "#723EC3",
+  Female: "#0EA5A4",
+  Other: "#E8892B",
+};
+const AXIS = "#9CA3AF"; // recessive gray-400
+const GRID = "#E5E7EB"; // recessive gray-200
+const tooltipStyle = { borderRadius: 12, border: `1px solid ${GRID}`, fontSize: 12 };
 
 export default function PopulationOfficeDashboard() {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
@@ -50,6 +53,19 @@ export default function PopulationOfficeDashboard() {
   useEffect(() => {
     api.get("/population/analytics").then((r) => setAnalytics(r.data.data)).catch(() => undefined);
   }, [tick]);
+
+  const ageData = Object.entries(analytics?.population_by_age_group ?? {}).map(([label, count]) => ({
+    label: label.replace(" years", ""),
+    count,
+  }));
+  const purokData = (analytics?.population_by_zone ?? []).map((z) => ({
+    label: z.zone_purok ?? "Unassigned",
+    count: z.count,
+  }));
+  const genderData = Object.entries(analytics?.population_by_gender ?? {})
+    .map(([name, value]) => ({ name, value }))
+    .filter((d) => d.value > 0);
+  const events = analytics?.events_this_year ?? [];
 
   return (
     <div>
@@ -75,33 +91,98 @@ export default function PopulationOfficeDashboard() {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <Card title="Age distribution">
-          {analytics && <DistributionList data={analytics.population_by_age_group} />}
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={ageData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }} barCategoryGap="22%">
+              <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="3 3" />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: AXIS }} axisLine={{ stroke: GRID }} tickLine={false} interval={0} />
+              <YAxis tick={{ fontSize: 11, fill: AXIS }} axisLine={false} tickLine={false} allowDecimals={false} width={30} />
+              <Tooltip cursor={{ fill: "rgba(114,62,195,0.06)" }} contentStyle={tooltipStyle} formatter={(v) => [`${v} residents`, "Count"]} />
+              <Bar dataKey="count" fill={PRIMARY} radius={[4, 4, 0, 0]} maxBarSize={44} isAnimationActive animationDuration={900} animationEasing="ease-out">
+                <LabelList dataKey="count" position="top" fontSize={11} fill="#4B5563" />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </Card>
+
         <Card title="Population by purok">
-          {analytics && (
-            <DistributionList
-              data={Object.fromEntries(
-                analytics.population_by_zone.map((z) => [z.zone_purok ?? "Unassigned", z.count])
-              )}
-            />
-          )}
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={purokData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }} barCategoryGap="22%">
+              <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="3 3" />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: AXIS }} axisLine={{ stroke: GRID }} tickLine={false} interval={0} />
+              <YAxis tick={{ fontSize: 11, fill: AXIS }} axisLine={false} tickLine={false} allowDecimals={false} width={30} />
+              <Tooltip cursor={{ fill: "rgba(114,62,195,0.06)" }} contentStyle={tooltipStyle} formatter={(v) => [`${v} residents`, "Count"]} />
+              <Bar dataKey="count" fill={PRIMARY} radius={[4, 4, 0, 0]} maxBarSize={44} isAnimationActive animationDuration={900} animationEasing="ease-out">
+                <LabelList dataKey="count" position="top" fontSize={11} fill="#4B5563" />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </Card>
+
         <div className="space-y-6">
           <Card title="Sex distribution">
-            {analytics && <DistributionList data={analytics.population_by_gender} />}
+            {genderData.length === 0 ? (
+              <p className="py-10 text-center text-sm text-gray-400">No data yet.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={230}>
+                <PieChart>
+                  <Pie
+                    data={genderData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={55}
+                    outerRadius={85}
+                    paddingAngle={2}
+                    stroke="#fff"
+                    strokeWidth={2}
+                    isAnimationActive={false}
+                    labelLine={false}
+                    label={(props: {
+                      cx?: number; cy?: number; midAngle?: number;
+                      innerRadius?: number; outerRadius?: number; value?: number;
+                    }) => {
+                      const rad = Math.PI / 180;
+                      const cx = props.cx ?? 0;
+                      const cy = props.cy ?? 0;
+                      const mid = props.midAngle ?? 0;
+                      const inner = props.innerRadius ?? 0;
+                      const outer = props.outerRadius ?? 0;
+                      const r = inner + (outer - inner) / 2;
+                      const x = cx + r * Math.cos(-mid * rad);
+                      const y = cy + r * Math.sin(-mid * rad);
+                      return (
+                        <text x={x} y={y} fill="#fff" fontSize={12} fontWeight={700} textAnchor="middle" dominantBaseline="central">
+                          {props.value}
+                        </text>
+                      );
+                    }}
+                  >
+                    {genderData.map((d) => (
+                      <Cell key={d.name} fill={GENDER_COLORS[d.name] ?? "#9CA3AF"} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={tooltipStyle} formatter={(v, n) => [`${v} residents`, n]} />
+                  <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
           </Card>
+
           <Card title="Demographic events (this year)">
-            {(analytics?.events_this_year ?? []).length === 0 ? (
+            {events.length === 0 ? (
               <p className="py-3 text-center text-sm text-gray-400">No events recorded.</p>
             ) : (
-              <ul className="space-y-1.5 text-sm">
-                {analytics?.events_this_year.map((event) => (
-                  <li key={event.event_type} className="flex justify-between">
-                    <span className="text-dark">{event.event_type}</span>
-                    <span className="font-semibold text-primary">{event.count}</span>
-                  </li>
-                ))}
-              </ul>
+              <ResponsiveContainer width="100%" height={Math.max(90, events.length * 42)}>
+                <BarChart layout="vertical" data={events} margin={{ top: 4, right: 28, bottom: 0, left: 8 }} barCategoryGap="28%">
+                  <XAxis type="number" hide allowDecimals={false} />
+                  <YAxis type="category" dataKey="event_type" tick={{ fontSize: 11, fill: AXIS }} axisLine={false} tickLine={false} width={104} />
+                  <Tooltip cursor={{ fill: "rgba(114,62,195,0.06)" }} contentStyle={tooltipStyle} formatter={(v) => [`${v}`, "Count"]} />
+                  <Bar dataKey="count" fill={PRIMARY} radius={[0, 4, 4, 0]} barSize={16} isAnimationActive animationDuration={900} animationEasing="ease-out">
+                    <LabelList dataKey="count" position="right" fontSize={11} fill="#4B5563" />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
             )}
           </Card>
         </div>

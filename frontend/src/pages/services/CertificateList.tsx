@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Swal from "sweetalert2";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import { useAuth } from "../../contexts/AuthContext";
 import Card from "../../components/UI/Card";
@@ -169,6 +170,7 @@ export default function CertificateList() {
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!certResident) return;
+    if (!(await confirmAction({ title: "File this certificate application?", confirmText: "Yes, file" }))) return;
     setFeedback("");
     setSaving(true);
     try {
@@ -204,6 +206,14 @@ export default function CertificateList() {
       const reason = window.prompt("Reason for rejection (the resident will be notified):", "");
       if (reason === null) return; // cancelled
       body = { reason };
+    } else {
+      const prompts: Record<string, { title: string; confirmText: string; danger?: boolean }> = {
+        approve: { title: "Approve this certificate?", confirmText: "Yes, approve" },
+        release: { title: "Release this certificate to the resident?", confirmText: "Yes, release" },
+        reprint: { title: "Log a reprint for this certificate?", confirmText: "Yes, log reprint" },
+      };
+      const p = prompts[action];
+      if (p && !(await confirmAction(p))) return;
     }
     setFeedback("");
     try {

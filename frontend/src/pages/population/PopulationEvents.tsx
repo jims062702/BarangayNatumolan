@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
@@ -54,6 +55,7 @@ export default function PopulationEvents() {
 
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!(await confirmAction({ title: "Record this population event?", confirmText: "Yes, record" }))) return;
     setFeedback("");
     try {
       await api.post("/population/events", {
@@ -73,6 +75,14 @@ export default function PopulationEvents() {
   };
 
   const verify = async (row: PopulationEvent, status: "Verified" | "Rejected") => {
+    if (
+      !(await confirmAction({
+        title: `Mark this event as ${status}?`,
+        confirmText: `Yes, ${status.toLowerCase()}`,
+        danger: status === "Rejected",
+      }))
+    )
+      return;
     setFeedback("");
     try {
       await api.put(`/population/events/${row.id}/verify`, { verification_status: status });

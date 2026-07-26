@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
 import Modal from "../../components/UI/Modal";
@@ -96,6 +97,7 @@ export default function SkOfficials() {
 
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!(await confirmAction({ title: "Save this official?", confirmText: "Yes, save" }))) return;
     setSaving(true);
     setFeedback("");
     try {
@@ -124,7 +126,15 @@ export default function SkOfficials() {
   };
 
   const remove = async (official: Official) => {
-    if (!window.confirm(`Remove ${official.name}?`)) return;
+    if (
+      !(await confirmAction({
+        title: "Remove official?",
+        text: `${official.name} will be removed from the officials list.`,
+        confirmText: "Yes, remove",
+        danger: true,
+      }))
+    )
+      return;
     await api.delete(`/sk/officials/${official.id}`);
     load();
   };

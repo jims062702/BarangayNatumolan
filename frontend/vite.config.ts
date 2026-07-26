@@ -13,6 +13,7 @@ export default defineConfig({
           react: ["react", "react-dom", "react-router-dom"],
           motion: ["framer-motion"],
           swiper: ["swiper", "swiper/react"],
+          charts: ["recharts"],
         },
       },
     },

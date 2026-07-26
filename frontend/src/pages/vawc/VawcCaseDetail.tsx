@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { FiArrowLeft } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import Card from "../../components/UI/Card";
 import Modal from "../../components/UI/Modal";
 import StatusBadge from "../../components/UI/StatusBadge";
@@ -56,6 +57,7 @@ export default function VawcCaseDetail() {
   }, [id]);
 
   const submit = async (url: string, payload: object, close: () => void, message: string) => {
+    if (!(await confirmAction({ title: "Save this change to the case?", confirmText: "Yes, save" }))) return;
     setFeedback("");
     try {
       await api.post(url, payload);
@@ -68,6 +70,7 @@ export default function VawcCaseDetail() {
   };
 
   const updateStatus = async (status: string) => {
+    if (!(await confirmAction({ title: `Mark this case as "${status}"?`, confirmText: "Yes, update" }))) return;
     setFeedback("");
     try {
       await api.put(`/vawc/cases/${id}`, { status });

@@ -30,6 +30,10 @@ class ResidentController extends BaseController
             $query->where('zone_purok', $request->input('zone_purok'));
         }
 
+        if ($request->filled('gender')) {
+            $query->where('gender', $request->input('gender'));
+        }
+
         if ($request->filled('sector')) {
             $query->whereHas('sectors', function ($q) use ($request) {
                 $q->where('sector_type', $request->input('sector'));
@@ -73,14 +77,29 @@ class ResidentController extends BaseController
             'residency_status' => 'required|in:Permanent,Temporary,Migrant',
             'length_of_residence_years' => 'nullable|integer',
             'educational_attainment' => 'nullable|string',
-            'demographic_classification' => 'nullable|in:Senior Citizen,PWD,Solo Parent,Youth,Child,Others',
+            'demographic_classification' => 'nullable|in:Senior Citizen,PWD,Solo Parent,Youth,Child,Adult,Others',
+            // Sector tags chosen on the form (age-based + manual toggles).
+            'sectors' => 'nullable|array',
+            'sectors.*' => 'string|max:100',
         ]);
+
+        $sectors = collect($validated['sectors'] ?? [])->filter()->unique()->values();
+        unset($validated['sectors']);
 
         // Generate unique resident number
         $validated['resident_number'] = $this->generateResidentNumber();
 
         $resident = Resident::create($validated);
+
+        foreach ($sectors as $sectorType) {
+            $resident->sectors()->create([
+                'sector_type' => $sectorType,
+                'enrolled_date' => now()->toDateString(),
+            ]);
+        }
+
         LandingCache::clearStats(); // refresh the public "at a glance" count
+        $resident->load('sectors');
 
         return $this->success($resident, 'Resident created successfully', 201);
     }
@@ -90,7 +109,10 @@ class ResidentController extends BaseController
      */
     public function show(Resident $resident): JsonResponse
     {
-        $resident->load(['household', 'sectors', 'serviceRequests', 'certificates']);
+        $resident->load([
+            'household', 'sectors', 'serviceRequests', 'certificates',
+            'account:id,email,resident_id,is_active', // null when no portal account yet
+        ]);
         return $this->success($resident, 'Resident retrieved successfully');
     }
 
@@ -119,7 +141,7 @@ class ResidentController extends BaseController
             'residency_status' => 'in:Permanent,Temporary,Migrant',
             'length_of_residence_years' => 'nullable|integer|min:0',
             'educational_attainment' => 'nullable|string',
-            'demographic_classification' => 'nullable|in:Senior Citizen,PWD,Solo Parent,Youth,Child,Others',
+            'demographic_classification' => 'nullable|in:Senior Citizen,PWD,Solo Parent,Youth,Child,Adult,Others',
             'remarks' => 'nullable|string',
             'is_active' => 'boolean',
         ]);
@@ -147,13 +169,43 @@ class ResidentController extends BaseController
     }
 
     /**
-     * Lightweight household list for pickers (any registry-writing office).
+     * Lightweight household list for the searchable picker.
+     *
+     * Scales to a 20k+ registry by never sending the whole table: it is a
+     * typeahead — pass `?q=` to match household no. / address / purok / owner
+     * name (capped), or `?ids=` to hydrate specific pre-selected households
+     * (e.g. the one already on a resident being edited). With no params it
+     * returns the first page so the picker isn't empty when it opens.
      */
-    public function householdOptions(): JsonResponse
+    public function householdOptions(Request $request): JsonResponse
     {
-        $households = Household::with('head:id,first_name,last_name')
-            ->orderBy('household_number')
-            ->get(['id', 'household_number', 'zone_purok', 'street_address', 'household_head_id']);
+        $query = Household::with('head:id,first_name,last_name')
+            ->select(['id', 'household_number', 'zone_purok', 'street_address', 'household_head_id']);
+
+        // Hydrate specific households by id (to display an already-chosen value).
+        if ($request->filled('ids')) {
+            $ids = collect(explode(',', $request->input('ids')))
+                ->map(fn ($v) => (int) trim($v))
+                ->filter()
+                ->all();
+
+            return $this->success($query->whereIn('id', $ids)->get(), 'Household options retrieved');
+        }
+
+        if ($request->filled('q')) {
+            $search = trim($request->input('q'));
+            $query->where(function ($q) use ($search) {
+                $q->where('household_number', 'like', "%{$search}%")
+                  ->orWhere('street_address', 'like', "%{$search}%")
+                  ->orWhere('zone_purok', 'like', "%{$search}%")
+                  ->orWhereHas('head', function ($hq) use ($search) {
+                      $hq->where('first_name', 'like', "%{$search}%")
+                         ->orWhere('last_name', 'like', "%{$search}%");
+                  });
+            });
+        }
+
+        $households = $query->orderBy('household_number')->limit(25)->get();
 
         return $this->success($households, 'Household options retrieved');
     }

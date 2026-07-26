@@ -199,6 +199,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('analytics', [PopulationController::class, 'getAnalytics']);
             Route::get('reports/sectoral', [PopulationController::class, 'getSectoralReport']);
             Route::post('residents/{resident}/create-account', [PopulationController::class, 'createResidentAccount']);
+            Route::post('residents/{resident}/change-password', [PopulationController::class, 'changeResidentPassword']);
             Route::get('accounts', [PopulationController::class, 'listResidentAccounts']);
             Route::post('accounts/{user}/toggle', [PopulationController::class, 'toggleResidentAccount']);
         });

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
@@ -44,6 +45,7 @@ export default function HouseholdList() {
 
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!(await confirmAction({ title: "Add this household?", confirmText: "Yes, add" }))) return;
     setFeedback("");
     try {
       await api.post("/population/households", {

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { FiAward, FiBookOpen, FiCalendar, FiCheckCircle, FiClipboard, FiClock } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import { formatWallClock } from "../../lib/datetime";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -71,6 +72,8 @@ export default function MainOfficeDashboard({ executive = false }: Props) {
       );
       if (answer === null) return; // cancelled
       reason = answer;
+    } else if (!(await confirmAction({ title: "Approve this certificate?", confirmText: "Yes, approve" }))) {
+      return;
     }
     try {
       await api.post(`/certificates/${certificate.id}/${action}`, reason !== undefined ? { reason } : {});

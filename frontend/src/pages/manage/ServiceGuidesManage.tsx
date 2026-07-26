@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
@@ -71,7 +72,15 @@ export default function ServiceGuidesManage() {
   };
 
   const remove = async (guide: ServiceGuide) => {
-    if (!window.confirm(`Delete "${guide.service_name}"?`)) return;
+    if (
+      !(await confirmAction({
+        title: "Delete service guide?",
+        text: `"${guide.service_name}" will be removed.`,
+        confirmText: "Yes, delete",
+        danger: true,
+      }))
+    )
+      return;
     try {
       await api.delete(`/manage/service-guides/${guide.id}`);
       load();

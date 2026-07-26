@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
 import Modal from "../../components/UI/Modal";
@@ -52,6 +53,7 @@ export default function SkHeroSlides() {
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!editId && !file) return; // a new slide needs an image
+    if (!(await confirmAction({ title: "Save this home picture?", confirmText: "Yes, save" }))) return;
     setSaving(true);
     setFeedback("");
     try {
@@ -96,7 +98,15 @@ export default function SkHeroSlides() {
   };
 
   const remove = async (slide: HeroSlide) => {
-    if (!window.confirm("Delete this home picture?")) return;
+    if (
+      !(await confirmAction({
+        title: "Delete this home picture?",
+        text: "It will be removed from the public landing page.",
+        confirmText: "Yes, delete",
+        danger: true,
+      }))
+    )
+      return;
     await api.delete(`/sk/hero-slides/${slide.id}`);
     load();
   };

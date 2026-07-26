@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
+import FormValidationStyler from "./components/FormValidationStyler";
 import MainLayout from "./layouts/MainLayout";
 
 // The public landing page loads eagerly — it is what most residents open.
@@ -30,6 +31,7 @@ const PortalProfile = lazy(() => import("./pages/portal/PortalProfile"));
 const ResidentList = lazy(() => import("./pages/residents/ResidentList"));
 const ResidentCreate = lazy(() => import("./pages/residents/ResidentCreate"));
 const ResidentDetail = lazy(() => import("./pages/residents/ResidentDetail"));
+const ResidentEdit = lazy(() => import("./pages/residents/ResidentEdit"));
 const ServiceRequestList = lazy(() => import("./pages/services/ServiceRequestList"));
 const CertificateList = lazy(() => import("./pages/services/CertificateList"));
 const AppointmentScheduler = lazy(() => import("./pages/appointments/AppointmentScheduler"));
@@ -79,6 +81,7 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <FormValidationStyler />
         <Suspense fallback={<PageLoader />}>
         <Routes>
           {/* Public site */}
@@ -119,6 +122,7 @@ export default function App() {
             <Route path="/residents" element={<ResidentList />} />
             <Route path="/residents/create" element={<ResidentCreate />} />
             <Route path="/residents/:id" element={<ResidentDetail />} />
+            <Route path="/residents/:id/edit" element={<ResidentEdit />} />
             <Route path="/services" element={<ServiceRequestList />} />
             <Route path="/certificates" element={<CertificateList />} />
             <Route path="/appointments" element={<AppointmentScheduler />} />

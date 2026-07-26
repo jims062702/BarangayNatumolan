@@ -35,10 +35,49 @@ class Resident extends Model
         'is_active' => 'boolean',
     ];
 
+    /**
+     * The age-derived sector tags the system manages automatically. The
+     * `residents:sync-sectors` command reconciles ONLY these; manual tags
+     * (Solo Parent, PWD, 4Ps, …) are left untouched.
+     */
+    public const AGE_SECTORS = ['Child', 'Youth', 'Adult', 'Senior Citizen'];
+
+    /**
+     * Age-based sectors for this resident today (mirrors the registration form):
+     *   0–14 Child · 15–17 Child + Youth · 18–30 Youth · 31–59 Adult · 60+ Senior.
+     * A resident can fall in more than one (the 15–17 overlap).
+     */
+    public function ageSectors(): array
+    {
+        $age = $this->birthdate?->age;
+        if ($age === null) {
+            return [];
+        }
+        if ($age <= 14) {
+            return ['Child'];
+        }
+        if ($age <= 17) {
+            return ['Child', 'Youth'];
+        }
+        if ($age <= 30) {
+            return ['Youth'];
+        }
+        if ($age <= 59) {
+            return ['Adult'];
+        }
+        return ['Senior Citizen'];
+    }
+
     // Relationships
     public function household(): BelongsTo
     {
         return $this->belongsTo(Household::class);
+    }
+
+    /** The resident's portal login account, if one has been issued. */
+    public function account()
+    {
+        return $this->hasOne(User::class, 'resident_id');
     }
 
     public function sectors(): HasMany

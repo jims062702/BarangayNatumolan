@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
@@ -62,6 +63,7 @@ export default function ServiceRequestList() {
 
   const createWalkIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!(await confirmAction({ title: "Record this walk-in request?", confirmText: "Yes, record" }))) return;
     setFeedback("");
     try {
       const response = await api.post("/service-requests", {
@@ -88,6 +90,14 @@ export default function ServiceRequestList() {
   };
 
   const setStatus = async (request: ServiceRequest, status: string) => {
+    if (
+      !(await confirmAction({
+        title: `Move ${request.request_number} to "${status}"?`,
+        confirmText: "Yes, update",
+        danger: status === "Rejected",
+      }))
+    )
+      return;
     setFeedback("");
     try {
       const response = await api.put(`/service-requests/${request.id}`, { status });

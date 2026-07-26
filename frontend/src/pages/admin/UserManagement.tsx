@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
@@ -56,6 +57,7 @@ export default function UserManagement() {
 
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!(await confirmAction({ title: "Save this staff account?", confirmText: "Yes, save" }))) return;
     setFeedback("");
     try {
       await api.post("/admin/users", {

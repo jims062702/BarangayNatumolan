@@ -1,19 +1,16 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { FiArrowLeft } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import { useAuth } from "../../contexts/AuthContext";
 import Card from "../../components/UI/Card";
+import Breadcrumbs from "../../components/UI/Breadcrumbs";
 import Modal from "../../components/UI/Modal";
 import StatusBadge from "../../components/UI/StatusBadge";
 import PageHeader from "../../components/UI/PageHeader";
 import FormField, { inputClasses } from "../../components/UI/FormField";
-import PhoneInput from "../../components/UI/PhoneInput";
-import type { Household, Resident } from "../../types";
-
-function householdLabel(h: Household): string {
-  const owner = h.head ? `${h.head.first_name} ${h.head.last_name}` : "no owner set";
-  return `${h.household_number} · ${h.zone_purok ?? "—"} · Owner: ${owner}`;
-}
+import type { Resident } from "../../types";
 
 const SECTORS = [
   "Senior Citizen",
@@ -27,27 +24,13 @@ const SECTORS = [
   "Informal Worker",
 ];
 
-const CLASSIFICATIONS = ["Senior Citizen", "PWD", "Solo Parent", "Youth", "Child", "Others"];
-
-type EditForm = {
-  first_name: string;
-  middle_name: string;
-  last_name: string;
-  suffix: string;
-  gender: string;
-  birthdate: string;
-  civil_status: string;
-  occupation: string;
-  contact_number: string;
-  email: string;
-  household_id: string;
-  zone_purok: string;
-  residency_status: string;
-  length_of_residence_years: string;
-  educational_attainment: string;
-  demographic_classification: string;
-  is_active: string;
-};
+/** Default portal password: Lastname + MMDDYY of birthdate (e.g. Cruz062702). */
+function defaultPortalPassword(lastName: string, birthdate?: string | null): string {
+  if (!birthdate) return "";
+  const [y, m, d] = birthdate.slice(0, 10).split("-");
+  if (!y || !m || !d) return "";
+  return `${lastName}${m}${d}${y.slice(2)}`;
+}
 
 function Row({ label, value }: { label: string; value?: string | null }) {
   return (
@@ -60,6 +43,7 @@ function Row({ label, value }: { label: string; value?: string | null }) {
 
 export default function ResidentDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [resident, setResident] = useState<Resident | null>(null);
   const [feedback, setFeedback] = useState("");
@@ -68,10 +52,8 @@ export default function ResidentDetail() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [accountEmail, setAccountEmail] = useState("");
   const [accountPassword, setAccountPassword] = useState("");
-  const [editOpen, setEditOpen] = useState(false);
-  const [editForm, setEditForm] = useState<EditForm | null>(null);
-  const [households, setHouseholds] = useState<Household[]>([]);
-  const [saving, setSaving] = useState(false);
+  const [passOpen, setPassOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
 
   const isBpo = user?.office === "Population" || user?.role === "Admin";
   const canEdit =
@@ -86,73 +68,6 @@ export default function ResidentDetail() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
-
-  const openEdit = () => {
-    if (!resident) return;
-    setEditForm({
-      first_name: resident.first_name ?? "",
-      middle_name: resident.middle_name ?? "",
-      last_name: resident.last_name ?? "",
-      suffix: resident.suffix ?? "",
-      gender: resident.gender ?? "Male",
-      birthdate: resident.birthdate ? resident.birthdate.slice(0, 10) : "",
-      civil_status: resident.civil_status ?? "Single",
-      occupation: resident.occupation ?? "",
-      contact_number: resident.contact_number ?? "",
-      email: resident.email ?? "",
-      household_id: resident.household_id ? String(resident.household_id) : "",
-      zone_purok: resident.zone_purok ?? "Purok 1",
-      residency_status: resident.residency_status ?? "Permanent",
-      length_of_residence_years: "",
-      educational_attainment: "",
-      demographic_classification: resident.demographic_classification ?? "",
-      is_active: resident.is_active === false ? "0" : "1",
-    });
-    setEditOpen(true);
-    if (households.length === 0) {
-      api.get("/residents/household-options").then((r) => setHouseholds(r.data.data ?? [])).catch(() => undefined);
-    }
-  };
-
-  const setField = (key: keyof EditForm) => (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
-  ) => setEditForm((prev) => (prev ? { ...prev, [key]: e.target.value } : prev));
-
-  // Selecting a household also fills the resident's Purok from that household.
-  const selectHousehold = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const id = e.target.value;
-    const household = households.find((h) => String(h.id) === id);
-    setEditForm((prev) =>
-      prev ? { ...prev, household_id: id, zone_purok: household?.zone_purok || prev.zone_purok } : prev
-    );
-  };
-
-  const saveEdit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!editForm) return;
-    setSaving(true);
-    setFeedback("");
-    try {
-      const payload: Record<string, unknown> = {
-        ...editForm,
-        household_id: editForm.household_id ? Number(editForm.household_id) : null,
-        demographic_classification: editForm.demographic_classification || null,
-        is_active: editForm.is_active === "1",
-      };
-      // Drop empty optional strings so we don't overwrite with blanks
-      ["length_of_residence_years", "educational_attainment"].forEach((k) => {
-        if (payload[k] === "") delete payload[k];
-      });
-      await api.put(`/residents/${id}`, payload);
-      setEditOpen(false);
-      setFeedback("Resident information updated.");
-      load();
-    } catch (err) {
-      setFeedback(errorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const addSector = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -170,8 +85,24 @@ export default function ResidentDetail() {
     }
   };
 
+  // Open the create-account modal with the email + default password pre-filled.
+  const openCreateAccount = () => {
+    if (!resident) return;
+    setAccountEmail(resident.email ?? "");
+    setAccountPassword(defaultPortalPassword(resident.last_name, resident.birthdate));
+    setAccountOpen(true);
+  };
+
   const createAccount = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (
+      !(await confirmAction({
+        title: "Create a portal account?",
+        text: `A login will be issued for ${accountEmail}.`,
+        confirmText: "Yes, create account",
+      }))
+    )
+      return;
     setFeedback("");
     try {
       await api.post(`/population/residents/${id}/create-account`, {
@@ -180,6 +111,33 @@ export default function ResidentDetail() {
       });
       setAccountOpen(false);
       setFeedback(`Portal account created for ${accountEmail}. Share the credentials securely.`);
+      load();
+    } catch (err) {
+      setFeedback(errorMessage(err));
+    }
+  };
+
+  // Open the change-password modal with the default password pre-filled.
+  const openChangePassword = () => {
+    if (!resident) return;
+    setNewPassword(defaultPortalPassword(resident.last_name, resident.birthdate));
+    setPassOpen(true);
+  };
+
+  const changePassword = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (
+      !(await confirmAction({
+        title: "Change this account's password?",
+        confirmText: "Yes, change",
+      }))
+    )
+      return;
+    setFeedback("");
+    try {
+      await api.post(`/population/residents/${id}/change-password`, { password: newPassword });
+      setPassOpen(false);
+      setFeedback("Portal account password updated. Share the new password securely.");
     } catch (err) {
       setFeedback(errorMessage(err));
     }
@@ -191,29 +149,52 @@ export default function ResidentDetail() {
 
   return (
     <div>
+      <Breadcrumbs
+        items={[
+          { label: "Dashboard", to: "/dashboard" },
+          { label: "Residents", to: "/residents" },
+          { label: `${resident.first_name} ${resident.last_name}` },
+        ]}
+      />
       <PageHeader
         title={`${resident.first_name} ${resident.last_name}`}
         subtitle={`Resident No. ${resident.resident_number}`}
         actions={
           <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => navigate("/residents")}
+              className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-gray px-5 py-2.5 text-sm font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
+            >
+              <FiArrowLeft aria-hidden="true" /> Back
+            </button>
             {canEdit && (
-              <button
-                type="button"
-                onClick={openEdit}
+              <Link
+                to={`/residents/${id}/edit`}
                 className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
               >
                 Edit information
-              </button>
+              </Link>
             )}
-            {isBpo && (
-              <button
-                type="button"
-                onClick={() => setAccountOpen(true)}
-                className="cursor-pointer rounded-full border border-primary/40 px-5 py-2.5 text-sm font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
-              >
-                Create portal account
-              </button>
-            )}
+            {isBpo &&
+              (resident.account ? (
+                // Already has an account — only a password change is offered.
+                <button
+                  type="button"
+                  onClick={openChangePassword}
+                  className="cursor-pointer rounded-full border border-primary/40 px-5 py-2.5 text-sm font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
+                >
+                  Change password
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={openCreateAccount}
+                  className="cursor-pointer rounded-full border border-primary/40 px-5 py-2.5 text-sm font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
+                >
+                  Create portal account
+                </button>
+              ))}
           </div>
         }
       />
@@ -305,116 +286,6 @@ export default function ResidentDetail() {
         </Card>
       </div>
 
-      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit Resident Information" wide>
-        {editForm && (
-          <form onSubmit={saveEdit} className="grid gap-4 sm:grid-cols-2">
-            <FormField label="First name" required>
-              <input value={editForm.first_name} onChange={setField("first_name")} required className={inputClasses} />
-            </FormField>
-            <FormField label="Middle name">
-              <input value={editForm.middle_name} onChange={setField("middle_name")} className={inputClasses} />
-            </FormField>
-            <FormField label="Last name" required>
-              <input value={editForm.last_name} onChange={setField("last_name")} required className={inputClasses} />
-            </FormField>
-            <FormField label="Suffix">
-              <input value={editForm.suffix} onChange={setField("suffix")} className={inputClasses} />
-            </FormField>
-            <FormField label="Gender">
-              <select value={editForm.gender} onChange={setField("gender")} className={inputClasses}>
-                <option>Male</option>
-                <option>Female</option>
-                <option>Other</option>
-              </select>
-            </FormField>
-            <FormField label="Birthdate">
-              <input type="date" value={editForm.birthdate} onChange={setField("birthdate")} className={inputClasses} />
-            </FormField>
-            <FormField label="Civil status">
-              <select value={editForm.civil_status} onChange={setField("civil_status")} className={inputClasses}>
-                <option>Single</option>
-                <option>Married</option>
-                <option>Widowed</option>
-                <option>Separated</option>
-              </select>
-            </FormField>
-            <FormField label="Occupation">
-              <input value={editForm.occupation} onChange={setField("occupation")} className={inputClasses} />
-            </FormField>
-            <FormField label="Contact number" hint="Philippine mobile — 10 digits after +63">
-              <PhoneInput
-                value={editForm.contact_number}
-                onChange={(v) => setEditForm((prev) => (prev ? { ...prev, contact_number: v } : prev))}
-              />
-            </FormField>
-            <FormField label="Email">
-              <input type="email" value={editForm.email} onChange={setField("email")} className={inputClasses} />
-            </FormField>
-            <FormField label="Household (Household No. / Address)" hint="Sets the household, address & Purok">
-              <select value={editForm.household_id} onChange={selectHousehold} className={inputClasses}>
-                <option value="">— No household —</option>
-                {households.map((h) => (
-                  <option key={h.id} value={h.id}>
-                    {householdLabel(h)}
-                  </option>
-                ))}
-              </select>
-            </FormField>
-            <FormField label="Zone / Purok">
-              <select value={editForm.zone_purok} onChange={setField("zone_purok")} className={inputClasses}>
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <option key={n}>Purok {n}</option>
-                ))}
-              </select>
-            </FormField>
-            <FormField label="Residency status">
-              <select value={editForm.residency_status} onChange={setField("residency_status")} className={inputClasses}>
-                <option>Permanent</option>
-                <option>Temporary</option>
-                <option>Migrant</option>
-              </select>
-            </FormField>
-            <FormField label="Classification">
-              <select value={editForm.demographic_classification} onChange={setField("demographic_classification")} className={inputClasses}>
-                <option value="">— None —</option>
-                {CLASSIFICATIONS.map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
-            </FormField>
-            <FormField label="Length of residence (years)">
-              <input type="number" min="0" value={editForm.length_of_residence_years} onChange={setField("length_of_residence_years")} className={inputClasses} placeholder="Leave blank to keep" />
-            </FormField>
-            <FormField label="Educational attainment">
-              <input value={editForm.educational_attainment} onChange={setField("educational_attainment")} className={inputClasses} placeholder="Leave blank to keep" />
-            </FormField>
-            <FormField label="Record status">
-              <select value={editForm.is_active} onChange={setField("is_active")} className={inputClasses}>
-                <option value="1">Active</option>
-                <option value="0">Inactive</option>
-              </select>
-            </FormField>
-
-            <div className="sm:col-span-2 flex gap-2">
-              <button
-                type="submit"
-                disabled={saving}
-                className="cursor-pointer rounded-full bg-primary px-8 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark disabled:opacity-60"
-              >
-                {saving ? "Saving…" : "Save changes"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setEditOpen(false)}
-                className="cursor-pointer rounded-full border border-gray px-6 py-2.5 text-sm font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        )}
-      </Modal>
-
       <Modal open={sectorOpen} onClose={() => setSectorOpen(false)} title="Tag sector membership">
         <form onSubmit={addSector} className="space-y-4">
           <FormField label="Sector" required>
@@ -439,22 +310,35 @@ export default function ResidentDetail() {
           person resides in Barangay Natumolan.
         </p>
         <form onSubmit={createAccount} className="space-y-4">
-          <FormField label="Login email" required>
+          <FormField
+            label="Login email"
+            required
+            hint={
+              resident.email
+                ? "Auto-filled from the resident's record."
+                : "This resident has no email on file — enter one to proceed (it will be saved)."
+            }
+          >
             <input
               type="email"
               value={accountEmail}
               onChange={(e) => setAccountEmail(e.target.value)}
               required
               className={inputClasses}
+              placeholder="resident@email.com"
             />
           </FormField>
-          <FormField label="Temporary password" required hint="At least 8 characters — the resident should change it after first login">
+          <FormField
+            label="Temporary password"
+            required
+            hint="Auto-set to Lastname + birthday (MMDDYY), e.g. Cruz062702. The resident should change it after first login."
+          >
             <input
               type="text"
               value={accountPassword}
               onChange={(e) => setAccountPassword(e.target.value)}
               required
-              minLength={8}
+              minLength={6}
               className={inputClasses}
             />
           </FormField>
@@ -463,6 +347,35 @@ export default function ResidentDetail() {
             className="w-full cursor-pointer rounded-full bg-primary py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
             Create account
+          </button>
+        </form>
+      </Modal>
+
+      <Modal open={passOpen} onClose={() => setPassOpen(false)} title="Change portal password">
+        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-xs text-dark">
+          Account: <strong>{resident.account?.email}</strong>. Set a new password
+          and share it with the resident securely.
+        </p>
+        <form onSubmit={changePassword} className="space-y-4">
+          <FormField
+            label="New password"
+            required
+            hint="Defaults to Lastname + birthday (MMDDYY), e.g. Cruz062702."
+          >
+            <input
+              type="text"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              required
+              minLength={6}
+              className={inputClasses}
+            />
+          </FormField>
+          <button
+            type="submit"
+            className="w-full cursor-pointer rounded-full bg-primary py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+          >
+            Update password
           </button>
         </form>
       </Modal>

@@ -86,7 +86,7 @@ export default function HeroCarousel() {
               <img
                 src={slide.image}
                 alt={slide.alt}
-                className="h-full w-full object-cover opacity-90"
+                className="h-full w-full object-cover opacity-50"
               />
             </SwiperSlide>
           ))}

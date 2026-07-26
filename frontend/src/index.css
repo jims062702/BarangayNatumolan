@@ -24,6 +24,44 @@ input::-ms-clear {
   --color-danger: #ef4444;
 }
 
+/* ---------------------------------------------------------------------------
+   Inline form validation — replaces the browser's native "Please fill out this
+   field" bubble with a modern red message + red field outline. Applied
+   globally by <FormValidationStyler /> (see components/FormValidationStyler).
+--------------------------------------------------------------------------- */
+.bn-invalid {
+  border-color: var(--color-danger) !important;
+}
+.bn-invalid:focus {
+  border-color: var(--color-danger) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2) !important;
+}
+.bn-field-error {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+  color: var(--color-danger);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1rem;
+  animation: bn-field-error-in 0.15s ease-out;
+}
+.bn-field-error svg {
+  flex: none;
+}
+@keyframes bn-field-error-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 html {
   scroll-behavior: smooth;
 }

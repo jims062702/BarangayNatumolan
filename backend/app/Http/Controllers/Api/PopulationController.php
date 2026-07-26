@@ -183,7 +183,7 @@ class PopulationController extends BaseController
 
         $validated = $request->validate([
             'email' => 'required|email|unique:users,email',
-            'password' => 'required|min:8',
+            'password' => 'required|min:6',
         ]);
 
         $user = User::create([
@@ -197,7 +197,30 @@ class PopulationController extends BaseController
             'created_by' => auth()->id(),
         ]);
 
+        // If the resident record had no email on file, save the one used for
+        // the account so it stays in sync.
+        if (empty($resident->email)) {
+            $resident->update(['email' => $validated['email']]);
+        }
+
         return $this->success($user, 'Resident portal account created', 201);
+    }
+
+    /** Change the password of a resident's existing portal account. */
+    public function changeResidentPassword(Request $request, Resident $resident)
+    {
+        $user = User::where('resident_id', $resident->id)->first();
+        if (!$user) {
+            return $this->error('This resident does not have a portal account yet', 404);
+        }
+
+        $validated = $request->validate([
+            'password' => 'required|min:6',
+        ]);
+
+        $user->update(['password' => Hash::make($validated['password'])]);
+
+        return $this->success(null, 'Password updated');
     }
 
     public function listResidentAccounts(Request $request)

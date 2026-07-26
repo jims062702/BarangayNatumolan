@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
@@ -36,6 +37,18 @@ export default function ResidentAccounts() {
   useAutoRefresh(load, REFRESH.staff);
 
   const toggle = async (user: User) => {
+    const deactivating = user.is_active !== false;
+    if (
+      !(await confirmAction({
+        title: deactivating ? "Deactivate this account?" : "Reactivate this account?",
+        text: deactivating
+          ? `${user.name} will no longer be able to sign in.`
+          : `${user.name} will be able to sign in again.`,
+        confirmText: deactivating ? "Yes, deactivate" : "Yes, reactivate",
+        danger: deactivating,
+      }))
+    )
+      return;
     setFeedback("");
     try {
       await api.post(`/population/accounts/${user.id}/toggle`);

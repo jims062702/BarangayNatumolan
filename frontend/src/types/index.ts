@@ -53,6 +53,8 @@ export interface Resident {
   sectors?: ResidentSector[];
   service_requests?: ServiceRequest[];
   certificates?: Certificate[];
+  /** Portal login account, if one has been issued to this resident. */
+  account?: { id: number; email: string; is_active: boolean } | null;
 }
 
 export interface ServiceRequest {

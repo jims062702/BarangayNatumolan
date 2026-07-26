@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import { formatWallClock, parseWallClock } from "../../lib/datetime";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -44,6 +45,7 @@ export default function PortalAppointments() {
 
   const book = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!(await confirmAction({ title: "Book this appointment?", confirmText: "Yes, book" }))) return;
     setFeedback("");
     try {
       await api.post("/portal/appointments", {
@@ -61,6 +63,16 @@ export default function PortalAppointments() {
   };
 
   const cancel = async (appointment: Appointment) => {
+    if (
+      !(await confirmAction({
+        title: "Cancel this appointment?",
+        text: `${appointment.appointment_number} will be cancelled.`,
+        confirmText: "Yes, cancel it",
+        cancelText: "Keep it",
+        danger: true,
+      }))
+    )
+      return;
     try {
       await api.post(`/portal/appointments/${appointment.id}/cancel`);
       setFeedback(`Appointment ${appointment.appointment_number} cancelled.`);

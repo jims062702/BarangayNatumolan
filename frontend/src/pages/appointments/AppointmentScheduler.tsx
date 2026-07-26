@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import { formatWallClock } from "../../lib/datetime";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -37,6 +38,14 @@ export default function AppointmentScheduler() {
   useAutoRefresh(load, REFRESH.staff);
 
   const confirm = async (appointment: Appointment) => {
+    if (
+      !(await confirmAction({
+        title: "Confirm this appointment?",
+        text: `${appointment.appointment_number} will be marked as confirmed.`,
+        confirmText: "Yes, confirm",
+      }))
+    )
+      return;
     try {
       await api.post(`/appointments/${appointment.id}/confirm`);
       setFeedback(`${appointment.appointment_number} confirmed.`);

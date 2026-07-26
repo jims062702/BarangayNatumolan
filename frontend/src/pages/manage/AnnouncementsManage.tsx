@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
@@ -78,7 +79,15 @@ export default function AnnouncementsManage() {
   };
 
   const remove = async (announcement: Announcement) => {
-    if (!window.confirm(`Delete "${announcement.title}"?`)) return;
+    if (
+      !(await confirmAction({
+        title: "Delete announcement?",
+        text: `"${announcement.title}" will be removed from the public site.`,
+        confirmText: "Yes, delete",
+        danger: true,
+      }))
+    )
+      return;
     try {
       await api.delete(`/sk/announcements/${announcement.id}`);
       load();
