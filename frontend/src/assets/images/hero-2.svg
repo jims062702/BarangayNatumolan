@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="River and hills of Natumolan">
+  <defs>
+    <linearGradient id="sky2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4c1d95"/>
+      <stop offset="0.5" stop-color="#7c3aed"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+    <linearGradient id="river2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ddd0f5"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#sky2)"/>
+  <circle cx="380" cy="240" r="90" fill="#fbf6f6" opacity="0.7"/>
+  <circle cx="380" cy="240" r="170" fill="#fbf6f6" opacity="0.12"/>
+  <path d="M0 560 Q 260 440 560 540 T 1080 520 T 1600 540 V900 H0 Z" fill="#31215c" opacity="0.85"/>
+  <path d="M0 650 Q 380 560 820 640 T 1600 620 V900 H0 Z" fill="#241740"/>
+  <path d="M700 900 C 760 800 660 740 780 680 C 880 630 840 600 900 560 L 1010 560 C 940 620 1000 650 900 710 C 810 760 920 810 880 900 Z" fill="url(#river2)" opacity="0.8"/>
+  <g fill="#1a1033">
+    <path d="M300 640 q 10 -70 18 -80 q 8 10 18 80 Z"/>
+    <path d="M296 566 q -46 -14 -60 -44 q 40 2 66 32 q 26 -30 66 -32 q -14 30 -60 44 Z"/>
+    <path d="M1240 620 q 10 -64 16 -74 q 8 10 16 74 Z"/>
+    <path d="M1238 552 q -42 -12 -54 -40 q 36 2 60 28 q 24 -26 60 -28 q -12 28 -54 40 Z"/>
+  </g>
+  <rect y="800" width="1600" height="100" fill="#1a1033"/>
+</svg>

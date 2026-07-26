@@ -1,0 +1,26 @@
+flows:
+  lookup_library_id:
+    name: Lookup library id
+    description: >
+      Looks up the Context7 library id for a named library. Use when the user
+      specifically asks for the Context7 / canonical id of a library, not a
+      documentation answer.
+    steps:
+      - collect: library_name
+        description: >
+          Name of the library to resolve to a Context7 id (e.g. next.js).
+      - collect: library_question
+        description: >
+          A short reason or context for the lookup, just to capture intent.
+      - call: resolve-library-id
+        mcp_server: context7
+        mapping:
+          input:
+            - param: libraryName
+              slot: library_name
+            - param: query
+              slot: library_question
+          output:
+            - slot: resolved_library_id
+              value: result.content
+      - action: utter_resolved_library_id

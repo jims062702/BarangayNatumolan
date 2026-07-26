@@ -1,0 +1,18 @@
+KEY_ID = "id"
+KEY_STEPS = "steps"
+KEY_NAME = "name"
+KEY_DESCRIPTION = "description"
+KEY_IF = "if"
+KEY_ALWAYS_INCLUDE_IN_PROMPT = "always_include_in_prompt"
+KEY_NLU_TRIGGER = "nlu_trigger"
+KEY_FILE_PATH = "file_path"
+KEY_PERSISTED_SLOTS = "persisted_slots"
+KEY_RUN_PATTERN_COMPLETED = "run_pattern_completed"
+KEY_TRANSLATION = "translation"
+KEY_CALLED_FLOW = "called_flow"
+KEY_LINKED_FLOW = "linked_flow"
+
+# MCP mapping field names
+KEY_MAPPING_INPUT = "input"
+KEY_MAPPING_OUTPUT = "output"
+KEY_MAPPING_SLOT = "slot"

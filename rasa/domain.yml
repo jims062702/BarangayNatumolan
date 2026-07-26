@@ -1,0 +1,198 @@
+version: "3.1"
+
+intents:
+  - greet
+  - goodbye
+  - thanks
+  - bot_challenge
+  - ask_certificates
+  - ask_fees
+  - ask_requirements
+  - ask_office_hours
+  - ask_contact
+  - ask_location
+  - ask_portal_account
+  - ask_track_request
+  - ask_appointment
+  - ask_walk_in
+  - ask_vawc_help
+  - ask_lupon
+  - ask_health
+  - ask_population
+  - ask_developers
+
+responses:
+  utter_greet:
+    - text: >-
+        Kumusta! 👋 I'm the Barangay Natumolan assistant. How can I help you
+        today?
+      buttons:
+        - title: "Certificates & fees"
+          payload: "/ask_certificates"
+        - title: "Office hours"
+          payload: "/ask_office_hours"
+        - title: "Get a portal account"
+          payload: "/ask_portal_account"
+        - title: "Track my request"
+          payload: "/ask_track_request"
+        - title: "Who developed this?"
+          payload: "/ask_developers"
+
+  utter_goodbye:
+    - text: "Salamat! Take care, and feel free to chat again anytime. 👋"
+
+  utter_thanks:
+    - text: "Walang anuman! Happy to help. Is there anything else you need?"
+
+  utter_iamabot:
+    - text: >-
+        I'm the official AI assistant of Barangay Natumolan, Tagoloan,
+        Misamis Oriental. I can answer questions about certificates, fees,
+        offices, and the resident portal.
+
+  utter_certificates:
+    - text: >-
+        Barangay Natumolan issues these certificates:
+
+        • Barangay Clearance — ₱50.00
+        • Certificate of Residency — ₱30.00
+        • Certificate of Indigency — FREE
+        • First-Time Jobseeker Certification — FREE (RA 11261)
+        • Certificate of Low or No Income — FREE
+        • Business Barangay Clearance — ₱200.00
+        • Good Moral Character — ₱50.00
+
+        Walk in at the Main Office, or request online through the resident
+        portal if you have an account.
+      buttons:
+        - title: "What are the requirements?"
+          payload: "/ask_requirements"
+        - title: "How do I request online?"
+          payload: "/ask_portal_account"
+
+  utter_fees:
+    - text: >-
+        Standard fees: Barangay Clearance ₱50 · Certificate of Residency ₱30 ·
+        Business Barangay Clearance ₱200 · Good Moral ₱50. Certificates of
+        Indigency, Low/No Income, and First-Time Jobseeker (RA 11261) are
+        FREE. Indigent residents may also request a fee exemption at the
+        Main Office.
+
+  utter_requirements:
+    - text: >-
+        Bring at least one valid ID and make sure you are listed in the
+        barangay resident registry. Specific certificates may need extra
+        documents (for example, a business clearance needs your business
+        details) — the clerk at the Main Office will guide you. Processing
+        usually takes the same day once the Punong Barangay approves.
+
+  utter_office_hours:
+    - text: >-
+        🕗 The Barangay Hall is open Monday to Friday, 8:00 AM – 5:00 PM
+        (except holidays). All offices — Main Office, VAWC Desk, Lupon,
+        Population Office, and Health Station — follow the same schedule.
+
+  utter_contact:
+    - text: >-
+        📞 (088) 000-0000 · +63 917 000 0000
+        📧 barangaynatumolan@gmail.com
+        You can also send a message through the Contact section of this
+        website — it goes straight to the Main Office staff.
+
+  utter_location:
+    - text: >-
+        📍 We are at the Barangay Hall, Barangay Natumolan, Tagoloan,
+        Misamis Oriental 9001, Philippines. There is a map at the bottom of
+        this page in the Contact section.
+
+  utter_portal_account:
+    - text: >-
+        Resident portal accounts are issued only by the Barangay Population
+        Office (BPO) to verified residents — this keeps the system exclusive
+        to people who actually live in Natumolan. Visit the BPO at the
+        Barangay Hall with a valid ID to enroll. Once you have an account you
+        can request certificates, book appointments, and track everything
+        online.
+
+  utter_track_request:
+    - text: >-
+        If you have a portal account, sign in and open “My Requests” — the
+        status updates in real time (Pending → In Progress → Approved →
+        Completed). You will also get an in-system notification at every
+        step. No account yet? Visit the Main Office with your request number
+        and the clerk will check it for you.
+
+  utter_appointment:
+    - text: >-
+        With a portal account, sign in and open “Appointments” to book a
+        schedule. Otherwise you may walk in — the desk serves walk-ins
+        Monday–Friday, 8:00 AM–5:00 PM.
+
+  utter_walk_in:
+    - text: >-
+        Walk-ins are welcome! Go to the Main Office desk, present a valid ID,
+        and tell the clerk what you need. Your request is recorded on the
+        spot and processed the same day whenever possible — certificates just
+        need the Punong Barangay's approval before printing.
+
+  utter_vawc:
+    - text: >-
+        The VAWC Desk (Violence Against Women and Children) provides
+        confidential help — reports are handled privately by the VAWC
+        officer only. Visit the desk at the Barangay Hall or call the
+        barangay hotline. ⚠️ If you or someone else is in immediate danger,
+        call 911 or the PNP hotline right away. You are not alone, and help
+        is available.
+
+  utter_lupon:
+    - text: >-
+        The Lupon Tagapamayapa settles disputes between residents through
+        the Katarungang Pambarangay — mediation and conciliation at the
+        barangay level, often required before going to court. File your
+        complaint at the Lupon desk in the Barangay Hall; hearings are
+        scheduled and both parties are notified.
+
+  utter_health:
+    - text: >-
+        The Barangay Health Station offers medical consultations,
+        immunization for children, prenatal/maternal care, and child health
+        checkups — Monday to Friday, 8:00 AM–5:00 PM. Services are free for
+        residents.
+
+  utter_population:
+    - text: >-
+        The Population Office (BPO) keeps the resident and household
+        registry, records births/deaths/transfers, and issues resident
+        portal accounts. Visit them to update your household information or
+        to enroll in the portal.
+
+  utter_developers:
+    - text: |-
+        The Barangay Natumolan Management Information System was developed by
+        Team Pentagram 🖐️
+
+        • Honeyleth S. Monteadora — Project Manager
+        • Angeline O. Auza — Technical Writer
+        • VJ L. Batal — System Analyst 1
+        • Rachiel C. Torrejos — System Analyst 2
+        • Johnvyll A. Gumahin — Frontend Developer
+        • James Gasang — Backend Developer
+
+        Salamat for using our system! 💜
+
+  utter_default:
+    - text: >-
+        Sorry, I did not quite get that. 😅 You can ask me about
+        certificates, fees, requirements, office hours, appointments, or the
+        resident portal — or try one of these:
+      buttons:
+        - title: "Certificates & fees"
+          payload: "/ask_certificates"
+        - title: "Office hours"
+          payload: "/ask_office_hours"
+        - title: "Contact the barangay"
+          payload: "/ask_contact"
+
+session_config:
+  session_expiration_time: 60
+  carry_over_slots_to_new_session: true

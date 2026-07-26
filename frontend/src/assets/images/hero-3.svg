@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Community fiesta at sunrise">
+  <defs>
+    <linearGradient id="sky3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5b2fa0"/>
+      <stop offset="0.6" stop-color="#9a6fe0"/>
+      <stop offset="1" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#sky3)"/>
+  <circle cx="800" cy="640" r="150" fill="#fcd34d" opacity="0.85"/>
+  <circle cx="800" cy="640" r="260" fill="#fcd34d" opacity="0.18"/>
+  <g opacity="0.9">
+    <path d="M0 60 Q 400 180 800 120 T 1600 100" fill="none" stroke="#2c1e4f" stroke-width="5"/>
+    <g fill="#2c1e4f">
+      <path d="M120 92 l22 44 h-44 Z"/>
+      <path d="M300 128 l22 44 h-44 Z"/>
+      <path d="M480 142 l22 44 h-44 Z"/>
+      <path d="M660 132 l22 44 h-44 Z"/>
+      <path d="M840 116 l22 44 h-44 Z"/>
+      <path d="M1020 106 l22 44 h-44 Z"/>
+      <path d="M1200 100 l22 44 h-44 Z"/>
+      <path d="M1380 98 l22 44 h-44 Z"/>
+    </g>
+  </g>
+  <g fill="#241740">
+    <path d="M60 760 V660 h150 V760 Z M50 660 L135 600 L220 660 Z"/>
+    <path d="M300 760 V680 h120 V760 Z M290 680 L360 630 L430 680 Z"/>
+    <path d="M1180 760 V670 h140 V760 Z M1170 670 L1250 610 L1330 670 Z"/>
+    <path d="M1420 760 V690 h110 V760 Z M1410 690 L1475 640 L1540 690 Z"/>
+  </g>
+  <rect y="760" width="1600" height="140" fill="#1a1033"/>
+</svg>

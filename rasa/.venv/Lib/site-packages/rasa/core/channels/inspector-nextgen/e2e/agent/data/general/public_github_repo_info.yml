@@ -1,0 +1,20 @@
+flows:
+  public_github_repo_info:
+    name: Public GitHub repository info
+    description: >
+      Answers questions about public GitHub repositories using DeepWiki: project
+      architecture, how features or APIs work, setup and configuration, and other
+      documentation-grounded explanations. Use when the user asks about a specific
+      open-source repo (owner/repo format), wants to understand a public GitHub
+      project, or needs information that should be grounded in that repository's
+      wiki and docs.
+    steps:
+      - collect: github_repo
+        description: >
+          GitHub repository in owner/repo form (e.g. rasaHQ/rasa, facebook/react).
+          Lowercase owner and repo names; no URL required.
+      - collect: github_repo_question
+        description: >
+          The user's concrete question about that repository: behavior, design,
+          usage, setup, or "what does X do in this repo".
+      - call: deepwiki_github

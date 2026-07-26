@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Barangay Health Station">
+  <defs>
+    <linearGradient id="of4" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#065f46"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="500" fill="url(#of4)"/>
+  <circle cx="670" cy="410" r="150" fill="#fbf6f6" opacity="0.08"/>
+  <g transform="translate(400 240)">
+    <rect x="-150" y="-90" width="300" height="200" rx="24" fill="#fbf6f6" opacity="0.95"/>
+    <path d="M-22 -64 h44 v42 h42 v44 h-42 v42 h-44 v-42 h-42 v-44 h42 Z" fill="#16a34a"/>
+    <path d="M-150 40 h60 l20 -34 24 56 20 -34 h176" fill="none" stroke="#16a34a" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/>
+  </g>
+  <text x="400" y="452" text-anchor="middle" font-family="Poppins, Arial, sans-serif" font-size="24" font-weight="600" letter-spacing="5" fill="#fbf6f6" opacity="0.85">HEALTH STATION</text>
+</svg>

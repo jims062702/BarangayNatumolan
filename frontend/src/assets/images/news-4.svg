@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" preserveAspectRatio="xMidYMid slice" role="img" aria-label="SK youth summit announcement">
+  <defs>
+    <linearGradient id="nw4" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#723ec3"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="500" fill="url(#nw4)"/>
+  <circle cx="680" cy="100" r="150" fill="#fbf6f6" opacity="0.1"/>
+  <circle cx="110" cy="420" r="130" fill="#fbf6f6" opacity="0.1"/>
+  <g fill="#fbf6f6" opacity="0.95">
+    <path d="M400 120 l26 62 67 6 -51 44 15 66 -57 -35 -57 35 15 -66 -51 -44 67 -6 Z"/>
+    <path d="M255 210 l15 36 39 4 -30 26 9 38 -33 -20 -33 20 9 -38 -30 -26 39 -4 Z" opacity="0.7"/>
+    <path d="M545 210 l15 36 39 4 -30 26 9 38 -33 -20 -33 20 9 -38 -30 -26 39 -4 Z" opacity="0.7"/>
+  </g>
+  <text x="400" y="450" text-anchor="middle" font-family="Poppins, Arial, sans-serif" font-size="26" font-weight="600" letter-spacing="6" fill="#fbf6f6" opacity="0.85">SK YOUTH SUMMIT</text>
+</svg>

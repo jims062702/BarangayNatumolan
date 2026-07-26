@@ -1,0 +1,2 @@
+[console_scripts]
+duoname = duoname.__main__:main

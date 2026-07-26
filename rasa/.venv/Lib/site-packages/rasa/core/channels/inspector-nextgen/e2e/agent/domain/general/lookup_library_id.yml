@@ -1,0 +1,13 @@
+version: "3.1"
+
+slots:
+  resolved_library_id:
+    type: text
+    mappings:
+      - type: controlled
+
+responses:
+  utter_resolved_library_id:
+    - text: "Context7 resolved that to: {resolved_library_id}"
+      metadata:
+        rephrase: True

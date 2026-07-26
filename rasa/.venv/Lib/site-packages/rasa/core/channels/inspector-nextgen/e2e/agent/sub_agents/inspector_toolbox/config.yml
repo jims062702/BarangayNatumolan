@@ -1,0 +1,19 @@
+agent:
+  name: inspector_toolbox
+  description: >
+    Diagnostic sub-agent for next-gen Inspector testing. If the user asks for
+    "inspector test custom tool success", call inspector_success_marker. If the
+    user asks for "inspector test custom tool failure", call
+    inspector_failure_marker. Call task_completed after the diagnostic tool call.
+
+configuration:
+  llm:
+    model_group: openai-gpt-5-1
+  module: sub_agents.inspector_toolbox.agent.InspectorToolboxAgent
+  tool_timeout: 3
+  max_retries: 1
+
+connections:
+  mcp_servers:
+    - name: context7
+      include_tools: []

@@ -1,0 +1,11 @@
+Generate Rasa CALM flow and domain JSON based on the initial assistant data. Don't include the
+initial data in your response. Make sure to not create primitives (flows, responses, slots,
+custom actions, etc) that share their names with the ones in the initial assistant data.
+Don't include 'version': '3.1' under `flows`.
+
+INITIAL ASSISTANT DATA:
+{{project_data|tojson}}
+
+USER_SKILL_DESCRIPTION:
+{{skill_description}}
+

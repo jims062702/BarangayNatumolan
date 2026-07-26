@@ -1,0 +1,102 @@
+version: "3.1"
+
+rules:
+  - rule: Greet
+    steps:
+      - intent: greet
+      - action: utter_greet
+
+  - rule: Goodbye
+    steps:
+      - intent: goodbye
+      - action: utter_goodbye
+
+  - rule: Thanks
+    steps:
+      - intent: thanks
+      - action: utter_thanks
+
+  - rule: Bot challenge
+    steps:
+      - intent: bot_challenge
+      - action: utter_iamabot
+
+  - rule: Certificates
+    steps:
+      - intent: ask_certificates
+      - action: utter_certificates
+
+  - rule: Fees
+    steps:
+      - intent: ask_fees
+      - action: utter_fees
+
+  - rule: Requirements
+    steps:
+      - intent: ask_requirements
+      - action: utter_requirements
+
+  - rule: Office hours
+    steps:
+      - intent: ask_office_hours
+      - action: utter_office_hours
+
+  - rule: Contact
+    steps:
+      - intent: ask_contact
+      - action: utter_contact
+
+  - rule: Location
+    steps:
+      - intent: ask_location
+      - action: utter_location
+
+  - rule: Portal account
+    steps:
+      - intent: ask_portal_account
+      - action: utter_portal_account
+
+  - rule: Track request
+    steps:
+      - intent: ask_track_request
+      - action: utter_track_request
+
+  - rule: Appointment
+    steps:
+      - intent: ask_appointment
+      - action: utter_appointment
+
+  - rule: Walk-in
+    steps:
+      - intent: ask_walk_in
+      - action: utter_walk_in
+
+  - rule: VAWC help
+    steps:
+      - intent: ask_vawc_help
+      - action: utter_vawc
+
+  - rule: Lupon
+    steps:
+      - intent: ask_lupon
+      - action: utter_lupon
+
+  - rule: Health
+    steps:
+      - intent: ask_health
+      - action: utter_health
+
+  - rule: Population
+    steps:
+      - intent: ask_population
+      - action: utter_population
+
+  - rule: Developers
+    steps:
+      - intent: ask_developers
+      - action: utter_developers
+
+  - rule: Fallback
+    steps:
+      - intent: nlu_fallback
+      - action: utter_default

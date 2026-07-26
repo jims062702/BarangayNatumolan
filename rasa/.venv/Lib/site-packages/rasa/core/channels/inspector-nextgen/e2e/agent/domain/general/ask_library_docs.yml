@@ -1,0 +1,23 @@
+version: "3.1"
+
+slots:
+  library_name:
+    type: text
+    mappings:
+      - type: from_llm
+
+  library_question:
+    type: text
+    mappings:
+      - type: from_llm
+
+responses:
+  utter_ask_library_name:
+    - text: "Which library should I look up? (e.g. next.js, tailwindcss)"
+      metadata:
+        rephrase: True
+
+  utter_ask_library_question:
+    - text: "What would you like to know about it?"
+      metadata:
+        rephrase: True

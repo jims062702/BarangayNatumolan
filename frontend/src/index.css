@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+/* Hide Edge/IE's built-in password reveal — we render our own toggle. */
+input::-ms-reveal,
+input::-ms-clear {
+  display: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Barangay Natumolan design tokens
+--------------------------------------------------------------------------- */
+@theme {
+  --font-sans: "Poppins", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+
+  --color-primary: #723ec3;
+  --color-primary-dark: #5b2fa0;
+  --color-primary-light: #9a6fe0;
+  --color-secondary: #fbf6f6;
+  --color-dark: #1f2937;
+  --color-gray: #e5e7eb;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+body {
+  @apply bg-secondary font-sans text-dark antialiased;
+}
+
+/* Sections must land below the fixed navbar when anchor-scrolled */
+section[id] {
+  scroll-margin-top: 4.5rem;
+}
+
+::selection {
+  background-color: var(--color-primary);
+  color: #ffffff;
+}
+
+/* ---------------------------------------------------------------------------
+   Swiper theming
+--------------------------------------------------------------------------- */
+.hero-swiper .swiper-pagination-bullet {
+  width: 10px;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.55);
+  opacity: 1;
+  transition: all 0.3s ease;
+}
+
+.hero-swiper .swiper-pagination-bullet-active {
+  width: 28px;
+  border-radius: 9999px;
+  background: #ffffff;
+}
+
+.hero-swiper .swiper-pagination {
+  bottom: 6.5rem !important;
+}
+
+.news-swiper {
+  padding-bottom: 3.25rem !important;
+}
+
+.news-swiper .swiper-pagination-bullet {
+  width: 10px;
+  height: 10px;
+  background: #d4c3f1;
+  opacity: 1;
+  transition: all 0.3s ease;
+}
+
+.news-swiper .swiper-pagination-bullet-active {
+  width: 26px;
+  border-radius: 9999px;
+  background: var(--color-primary);
+}

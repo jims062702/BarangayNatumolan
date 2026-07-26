@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Clean-up drive announcement">
+  <defs>
+    <linearGradient id="nw3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0ea5e9"/>
+      <stop offset="1" stop-color="#155e75"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="500" fill="url(#nw3)"/>
+  <path d="M0 380 Q 200 340 400 380 T 800 380 V500 H0 Z" fill="#fbf6f6" opacity="0.12"/>
+  <path d="M0 420 Q 200 380 400 420 T 800 420 V500 H0 Z" fill="#fbf6f6" opacity="0.12"/>
+  <g transform="translate(400 220)">
+    <path d="M0 -110 C 90 -60 100 40 10 100 C -20 60 -60 -40 0 -110 Z" fill="#fbf6f6" opacity="0.95"/>
+    <path d="M-6 96 Q -30 20 4 -80" fill="none" stroke="#0ea5e9" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <text x="400" y="450" text-anchor="middle" font-family="Poppins, Arial, sans-serif" font-size="26" font-weight="600" letter-spacing="6" fill="#fbf6f6" opacity="0.8">CLEAN-UP DRIVE</text>
+</svg>

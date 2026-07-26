@@ -1,0 +1,5 @@
+# No custom action server or external tracker store needed —
+# the assistant runs fully self-contained.
+
+# action_endpoint:
+#   url: "http://localhost:5055/webhook"

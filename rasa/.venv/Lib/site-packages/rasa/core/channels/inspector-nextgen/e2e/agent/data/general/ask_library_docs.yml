@@ -1,0 +1,15 @@
+flows:
+  ask_library_docs:
+    name: Ask library docs
+    description: >
+      Answers questions about a software library using Context7 documentation.
+      Use when the user asks how something works in a named library or
+      framework (e.g. "how do I do X in Next.js?").
+    steps:
+      - collect: library_name
+        description: >
+          Name of the library or framework to look up (e.g. next.js, tailwindcss).
+      - collect: library_question
+        description: >
+          The user's concrete documentation question about that library.
+      - call: library_docs

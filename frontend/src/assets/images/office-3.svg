@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Lupon Tagapamayapa">
+  <defs>
+    <linearGradient id="of3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#312e81"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="500" fill="url(#of3)"/>
+  <circle cx="120" cy="410" r="140" fill="#fbf6f6" opacity="0.08"/>
+  <g stroke="#fbf6f6" stroke-width="12" stroke-linecap="round" fill="none" opacity="0.95">
+    <line x1="400" y1="120" x2="400" y2="330"/>
+    <line x1="270" y1="170" x2="530" y2="170"/>
+    <line x1="330" y1="330" x2="470" y2="330"/>
+  </g>
+  <g fill="#fbf6f6" opacity="0.95">
+    <circle cx="400" cy="112" r="16"/>
+    <path d="M270 170 L230 260 A 58 40 0 0 0 310 260 Z"/>
+    <path d="M530 170 L490 260 A 58 40 0 0 0 570 260 Z"/>
+  </g>
+  <text x="400" y="450" text-anchor="middle" font-family="Poppins, Arial, sans-serif" font-size="24" font-weight="600" letter-spacing="5" fill="#fbf6f6" opacity="0.8">LUPON TAGAPAMAYAPA</text>
+</svg>

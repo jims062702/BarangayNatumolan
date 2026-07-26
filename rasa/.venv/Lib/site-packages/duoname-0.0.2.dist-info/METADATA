@@ -1,0 +1,55 @@
+Metadata-Version: 2.1
+Name: duoname
+Version: 0.0.2
+Summary: Random string <adjective>-<noun>. Useful for user-friendly name generation.
+Author-email: Mike Kroutikov <mkroutikov@innodata.com>
+License: MIT License
+Project-URL: Homepage, https://github.com/innodatalabs/duoname
+Project-URL: Documentation, https://github.com/innodatalabs/duoname
+Project-URL: Repository, https://github.com/innodatalabs/duoname
+Keywords: random name
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Provides-Extra: dev
+Requires-Dist: twine ; extra == 'dev'
+
+# duoname
+
+Generate a two-word random name using the pattern `<adjective>-<noun>`.
+Useful for generating user-friendly names and IDs.
+
+No dependencies, easy to use.
+
+## Usage
+
+```python
+from duoname import duoname
+
+name = duoname()
+```
+
+## Building
+
+```bash
+pip install -e .[dev]
+pip wheel . --no-deps
+twine upload duoname-{version}-py3-none-any.whl -u __token__ -p {pypi-token}
+```
+
+## Credits
+
+Word lists are taken from this wonderful repo: [`wordlists` (GitHub)](https://github.com/imsky/wordlists.git).
+
+## FAQ
+
+Q: Why not [`randomname` (GitHub)](https://github.com/beasteers/randomname)?
+
+A: I really hate transient dependencies, and `randomname` package depends on `fire`.

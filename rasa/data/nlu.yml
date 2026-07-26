@@ -1,0 +1,220 @@
+version: "3.1"
+
+nlu:
+  - intent: greet
+    examples: |
+      - hi
+      - hello
+      - hey
+      - good morning
+      - good afternoon
+      - good evening
+      - kumusta
+      - kamusta po
+      - hello po
+      - hi there
+      - maayong buntag
+      - maayong hapon
+
+  - intent: goodbye
+    examples: |
+      - bye
+      - goodbye
+      - see you
+      - thank you bye
+      - paalam
+      - sige salamat
+      - that's all
+      - ok bye na
+
+  - intent: thanks
+    examples: |
+      - thanks
+      - thank you
+      - salamat
+      - salamat po
+      - thank you so much
+      - daghang salamat
+      - appreciated
+
+  - intent: bot_challenge
+    examples: |
+      - are you a bot?
+      - are you human?
+      - am I talking to a robot?
+      - who are you
+      - what are you
+
+  - intent: ask_certificates
+    examples: |
+      - what certificates can I get?
+      - what certificates do you issue?
+      - I need a barangay clearance
+      - how do I get a certificate of residency
+      - I want to request a barangay certificate
+      - do you issue certificate of indigency
+      - paano kumuha ng barangay clearance
+      - I need a good moral certificate
+      - first time jobseeker certificate
+      - business clearance please
+      - what documents can the barangay issue
+      - unsaon pagkuha og barangay clearance
+      - requesting a certificate
+      - can I get a clearance for employment
+
+  - intent: ask_fees
+    examples: |
+      - how much are the fees?
+      - how much is a barangay clearance?
+      - magkano ang barangay clearance
+      - what is the price of certificate of residency
+      - how much do I pay for a certificate
+      - fees for business clearance
+      - is the indigency certificate free
+      - magkano po ang bayad
+      - tagpila ang barangay clearance
+      - certificate fees
+      - how much are the certificate fees?
+
+  - intent: ask_requirements
+    examples: |
+      - what are the requirements?
+      - what do I need to bring?
+      - ano ang requirements
+      - requirements for barangay clearance
+      - what documents do I need
+      - do I need an ID
+      - unsa ang kinahanglan dad-on
+      - what should I prepare for my request
+
+  - intent: ask_office_hours
+    examples: |
+      - what are your office hours?
+      - what time do you open?
+      - what time does the barangay hall close
+      - anong oras kayo bukas
+      - are you open on saturday
+      - open ba kayo ngayon
+      - schedule of the barangay office
+      - until what time are you open
+      - office hours po
+
+  - intent: ask_contact
+    examples: |
+      - how can I contact the barangay?
+      - what is your phone number
+      - contact number please
+      - what is your email
+      - paano kayo makontak
+      - how do I reach the barangay office
+      - hotline number
+
+  - intent: ask_location
+    examples: |
+      - where is the barangay hall?
+      - where are you located
+      - saan ang barangay hall
+      - address of barangay natumolan
+      - how do I get to the barangay office
+      - asa dapit ang barangay hall
+
+  - intent: ask_portal_account
+    examples: |
+      - how do I get a portal account?
+      - how do I get a resident portal account?
+      - how do I register online
+      - can I sign up on the website
+      - paano gumawa ng account
+      - how to create an account
+      - I want to register as a resident
+      - can I make my own account
+      - how do I log in as a resident
+      - who gives portal accounts
+
+  - intent: ask_track_request
+    examples: |
+      - how do I track my request?
+      - where is my certificate now
+      - what is the status of my request
+      - paano malalaman ang status ng request ko
+      - track my barangay clearance
+      - has my certificate been approved
+      - status of my application
+      - how do I follow up my request
+
+  - intent: ask_appointment
+    examples: |
+      - how do I book an appointment?
+      - can I schedule a visit
+      - I want to set an appointment
+      - paano mag appointment
+      - book a schedule with the barangay
+      - appointment for tomorrow
+
+  - intent: ask_walk_in
+    examples: |
+      - can I just walk in?
+      - do you accept walk-ins
+      - pwede ba walk in
+      - what is the walk in process
+      - can I go there without an appointment
+      - how does walk-in work
+
+  - intent: ask_vawc_help
+    examples: |
+      - I need help with domestic violence
+      - where can I report abuse
+      - my neighbor is being hurt by her husband
+      - VAWC desk
+      - help for abused women
+      - saan magrereport ng nananakit
+      - I want to report violence against a child
+      - my case is confidential, who can help
+
+  - intent: ask_lupon
+    examples: |
+      - I have a dispute with my neighbor
+      - how do I file a complaint against someone
+      - lupon tagapamayapa
+      - katarungang pambarangay
+      - I want to file a blotter
+      - settlement of dispute in the barangay
+      - paano magsampa ng reklamo sa barangay
+
+  - intent: ask_health
+    examples: |
+      - what health services do you offer?
+      - immunization schedule
+      - can I get a checkup at the barangay
+      - prenatal checkup sa barangay
+      - health center services
+      - bakuna para sa baby
+      - is there a doctor at the barangay
+
+  - intent: ask_population
+    examples: |
+      - how do I update my household record?
+      - I just moved here, how do I register as a resident
+      - transfer of residency
+      - how do I report a birth
+      - update my resident information
+      - paano magpalista bilang residente
+
+  - intent: ask_developers
+    examples: |
+      - who developed the barangay natumolan system?
+      - who developed this system
+      - who made this system
+      - who created this website
+      - who built this app
+      - who are the developers
+      - who is behind this system
+      - who programmed this
+      - development team
+      - who are the people behind this system
+      - team pentagram
+      - who designed this website
+      - sino ang gumawa ng system na ito
+      - sino ang nag develop nito
+      - sino gumawa ng website na to
+      - who developed this website
