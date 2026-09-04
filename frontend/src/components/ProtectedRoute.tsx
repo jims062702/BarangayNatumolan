@@ -8,6 +8,8 @@ interface ProtectedRouteProps {
   allowedOffices?: string[];
   /** Allow if the user's role matches ANY entry (OR'd with allowedOffices). */
   allowedRoles?: string[];
+  /** Block these roles outright — mirrors the API's `deny_role:` middleware. */
+  deniedRoles?: string[];
   /** Any staff account (blocks resident portal accounts). */
   staffOnly?: boolean;
   /** Resident portal accounts only. */
@@ -18,6 +20,7 @@ export default function ProtectedRoute({
   children,
   allowedOffices,
   allowedRoles,
+  deniedRoles,
   staffOnly,
   residentOnly,
 }: ProtectedRouteProps) {
@@ -44,11 +47,14 @@ export default function ProtectedRoute({
   if (staffOnly && isResident) return <Navigate to="/portal" replace />;
   if (residentOnly && !isResident) return <Navigate to="/dashboard" replace />;
 
-  if (allowedOffices || allowedRoles) {
+  const denied = deniedRoles?.includes(user.role) ?? false;
+
+  if (denied || allowedOffices || allowedRoles) {
     const officeOk = allowedOffices?.includes(user.office) ?? false;
     const roleOk = allowedRoles?.includes(user.role) ?? false;
 
-    if (!officeOk && !roleOk) {
+    // A denied role loses even if its office would otherwise be allowed.
+    if (denied || (!officeOk && !roleOk)) {
       return (
         <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-secondary px-4 text-center">
           <span className="text-5xl" aria-hidden="true">🔒</span>

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -11,15 +12,23 @@ import type { Announcement } from "../../types";
 
 const CATEGORIES = ["News", "Advisory", "Event", "Health", "Youth"];
 
+/**
+ * "YYYY-MM-DD" for a date input, taken from the stored string rather than via
+ * `new Date(...)` — parsing a UTC timestamp and formatting it back locally
+ * shifts the day by one in PH time.
+ */
+const asDateInput = (value?: string | null) => (value ? value.slice(0, 10) : "");
+
 export default function AnnouncementsManage() {
   const [rows, setRows] = useState<Announcement[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState("");
   const [saving, setSaving] = useState(false);
 
   const [open, setOpen] = useState(false);
+  // null = creating a new post; an id = correcting an existing one.
+  const [editId, setEditId] = useState<number | null>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [category, setCategory] = useState(CATEGORIES[0]);
@@ -27,6 +36,7 @@ export default function AnnouncementsManage() {
   const [eventAt, setEventAt] = useState("");
   const [eventTime, setEventTime] = useState("");
   const [image, setImage] = useState<File | null>(null);
+  const [currentImage, setCurrentImage] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -47,32 +57,67 @@ export default function AnnouncementsManage() {
   // Live updates without a manual refresh.
   useAutoRefresh(load, REFRESH.staff);
 
-  const create = async (event: FormEvent<HTMLFormElement>) => {
+  /* Fields are filled in when the dialog OPENS, so a half-typed post never
+     leaks into the next one after closing. */
+  const openAdd = () => {
+    setEditId(null);
+    setTitle("");
+    setBody("");
+    setCategory(CATEGORIES[0]);
+    setLocation("");
+    setEventAt("");
+    setEventTime("");
+    setImage(null);
+    setCurrentImage(null);
+    setOpen(true);
+  };
+
+  const openEdit = (a: Announcement) => {
+    setEditId(a.id);
+    setTitle(a.title);
+    setBody(a.body ?? "");
+    setCategory(a.category);
+    setLocation(a.location ?? "");
+    setEventAt(asDateInput(a.event_at));
+    setEventTime(a.event_time ?? "");
+    setImage(null);
+    setCurrentImage(a.image_url ?? null);
+    setOpen(true);
+  };
+
+  const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSaving(true);
-    setFeedback("");
     try {
       const form = new FormData();
       form.append("title", title);
       form.append("body", body);
       form.append("category", category);
-      if (location) form.append("location", location);
-      if (eventAt) form.append("event_at", eventAt);
-      if (eventTime) form.append("event_time", eventTime);
+      // Sent even when blank so clearing a field actually clears it.
+      form.append("location", location);
+      form.append("event_at", eventAt);
+      form.append("event_time", eventTime);
       if (image) form.append("image", image);
       form.append("is_published", "1");
-      await api.post("/sk/announcements", form, { headers: { "Content-Type": "multipart/form-data" } });
+
+      if (editId) {
+        // Multipart cannot be sent as a real PUT through PHP — Laravel reads
+        // the method from this field instead.
+        form.append("_method", "PUT");
+        await api.post(`/sk/announcements/${editId}`, form, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+        toast("Post updated — the public site now shows the correction.");
+      } else {
+        await api.post("/sk/announcements", form, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+        toast("Posted — it now appears in the News & Announcement section.");
+      }
       setOpen(false);
-      setTitle("");
-      setBody("");
-      setLocation("");
-      setEventAt("");
-      setEventTime("");
-      setImage(null);
-      setFeedback("Posted — it now appears in the News & Announcement section.");
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     } finally {
       setSaving(false);
     }
@@ -92,7 +137,7 @@ export default function AnnouncementsManage() {
       await api.delete(`/sk/announcements/${announcement.id}`);
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
@@ -113,17 +158,13 @@ export default function AnnouncementsManage() {
         actions={
           <button
             type="button"
-            onClick={() => setOpen(true)}
+            onClick={openAdd}
             className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
             + New post
           </button>
         }
       />
-
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
 
       <Card>
         <DataTable
@@ -181,15 +222,24 @@ export default function AnnouncementsManage() {
               },
             },
             {
-              header: "",
+              header: "Actions",
               render: (a: Announcement) => (
-                <button
-                  type="button"
-                  onClick={() => remove(a)}
-                  className="cursor-pointer text-xs font-semibold text-danger hover:underline"
-                >
-                  Delete
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openEdit(a)}
+                    className="cursor-pointer rounded-full border border-primary/40 px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => remove(a)}
+                    className="cursor-pointer rounded-full border border-danger/40 px-3 py-1.5 text-xs font-semibold text-danger transition-colors hover:bg-danger hover:text-white"
+                  >
+                    Delete
+                  </button>
+                </div>
               ),
             },
           ]}
@@ -206,8 +256,13 @@ export default function AnnouncementsManage() {
         />
       </Card>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="New News / Announcement" wide>
-        <form onSubmit={create} className="space-y-4">
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={editId ? "Edit News / Announcement" : "New News / Announcement"}
+        wide
+      >
+        <form onSubmit={save} className="space-y-4">
           <FormField label="Title" required>
             <input value={title} onChange={(e) => setTitle(e.target.value)} required className={inputClasses} />
           </FormField>
@@ -232,20 +287,39 @@ export default function AnnouncementsManage() {
               <input value={eventTime} onChange={(e) => setEventTime(e.target.value)} className={inputClasses} placeholder="9:00 AM – 12:00 NN" />
             </FormField>
           </div>
-          <FormField label="Photo (optional)" hint="Shown on the News card. JPG/PNG up to 5MB.">
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(e) => setImage(e.target.files?.[0] ?? null)}
-              className="block w-full text-sm text-gray-600 file:mr-3 file:cursor-pointer file:rounded-full file:border-0 file:bg-primary/10 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primary"
-            />
+          <FormField
+            label={editId ? "Replace photo (optional)" : "Photo (optional)"}
+            hint={
+              editId
+                ? "Leave this empty to keep the photo already on the post."
+                : "Shown on the News card. JPG/PNG up to 5MB."
+            }
+          >
+            <div className="space-y-2">
+              {editId && currentImage && (
+                <div className="flex items-center gap-3">
+                  <img
+                    src={currentImage}
+                    alt="Current photo on this post"
+                    className="h-14 w-20 shrink-0 rounded-lg object-cover"
+                  />
+                  <span className="text-xs text-gray-500">Photo currently in use</span>
+                </div>
+              )}
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setImage(e.target.files?.[0] ?? null)}
+                className="block w-full text-sm text-gray-600 file:mr-3 file:cursor-pointer file:rounded-full file:border-0 file:bg-primary/10 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primary"
+              />
+            </div>
           </FormField>
           <button
             type="submit"
             disabled={saving}
             className="w-full cursor-pointer rounded-full bg-primary py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark disabled:opacity-50"
           >
-            {saving ? "Posting…" : "Post"}
+            {saving ? (editId ? "Saving…" : "Posting…") : editId ? "Save changes" : "Post"}
           </button>
         </form>
       </Modal>

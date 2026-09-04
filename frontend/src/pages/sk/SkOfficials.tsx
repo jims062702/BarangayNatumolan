@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -41,7 +42,6 @@ const EMPTY: FormState = { group: "Barangay", position: "", name: "", term: "202
 export default function SkOfficials() {
   const [officials, setOfficials] = useState<Official[]>([]);
   const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState("");
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY);
@@ -99,7 +99,6 @@ export default function SkOfficials() {
     event.preventDefault();
     if (!(await confirmAction({ title: "Save this official?", confirmText: "Yes, save" }))) return;
     setSaving(true);
-    setFeedback("");
     try {
       const body = new FormData();
       body.append("group", form.group);
@@ -111,15 +110,15 @@ export default function SkOfficials() {
       if (form.id) {
         body.append("_method", "PUT");
         await api.post(`/sk/officials/${form.id}`, body, { headers: { "Content-Type": "multipart/form-data" } });
-        setFeedback("Official updated.");
+        toast("Official updated.");
       } else {
         await api.post("/sk/officials", body, { headers: { "Content-Type": "multipart/form-data" } });
-        setFeedback("Official added — now shown on the public site.");
+        toast("Official added — now shown on the public site.");
       }
       setOpen(false);
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     } finally {
       setSaving(false);
     }
@@ -200,14 +199,10 @@ export default function SkOfficials() {
         }
       />
 
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
-
       {loading ? (
         <p className="py-10 text-center text-sm text-gray-400">Loading…</p>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {renderGroup("Barangay")}
           {renderGroup("SK")}
         </div>

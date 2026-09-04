@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { formatWallClock, parseWallClock } from "../../lib/datetime";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
@@ -11,7 +12,7 @@ import PageHeader from "../../components/UI/PageHeader";
 import FormField, { inputClasses } from "../../components/UI/FormField";
 import type { Appointment } from "../../types";
 
-const OFFICES = ["Main Office", "Population", "Health Station", "CDC", "Lupon"];
+const OFFICES = ["Main Office", "Population", "Health Station", "Lupon"];
 
 export default function PortalAppointments() {
   const [rows, setRows] = useState<Appointment[]>([]);
@@ -22,7 +23,6 @@ export default function PortalAppointments() {
   const [office, setOffice] = useState(OFFICES[0]);
   const [datetime, setDatetime] = useState("");
   const [notes, setNotes] = useState("");
-  const [feedback, setFeedback] = useState("");
 
   const load = (p = page) => {
     setLoading(true);
@@ -46,7 +46,6 @@ export default function PortalAppointments() {
   const book = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!(await confirmAction({ title: "Book this appointment?", confirmText: "Yes, book" }))) return;
-    setFeedback("");
     try {
       await api.post("/portal/appointments", {
         office,
@@ -55,10 +54,10 @@ export default function PortalAppointments() {
       });
       setBookOpen(false);
       setNotes("");
-      setFeedback("Appointment requested — the office will confirm it.");
+      toast("Appointment requested — the office will confirm it.");
       load(1);
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
@@ -75,10 +74,10 @@ export default function PortalAppointments() {
       return;
     try {
       await api.post(`/portal/appointments/${appointment.id}/cancel`);
-      setFeedback(`Appointment ${appointment.appointment_number} cancelled.`);
+      toast(`Appointment ${appointment.appointment_number} cancelled.`);
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
@@ -97,10 +96,6 @@ export default function PortalAppointments() {
           </button>
         }
       />
-
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
 
       <Card>
         <DataTable

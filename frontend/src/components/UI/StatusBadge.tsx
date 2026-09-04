@@ -6,10 +6,12 @@ const STATUS_TONES: Record<string, string> = {
   Completed: "bg-success/10 text-success",
   Rejected: "bg-danger/10 text-danger",
   Cancelled: "bg-gray text-gray-500",
-  // Certificates
-  Application: "bg-warning/10 text-warning",
-  Verification: "bg-primary/10 text-primary",
+  // Certificates — the counter workflow, in order. `Printed` and
+  // `For Signature` are retired stages, kept so historical rows still render.
+  Processing: "bg-primary/10 text-primary",
   Printed: "bg-primary/10 text-primary",
+  "For Signature": "bg-warning/10 text-warning",
+  "Ready to Claim": "bg-success/10 text-success",
   Released: "bg-success/10 text-success",
   // Appointments
   Scheduled: "bg-primary/10 text-primary",
@@ -38,7 +40,14 @@ const STATUS_TONES: Record<string, string> = {
   Rescheduled: "bg-warning/10 text-warning",
   // Population events
   Verified: "bg-success/10 text-success",
-  // CDC / attendance
+  // Service queue
+  Waiting: "bg-warning/10 text-warning",
+  Called: "bg-primary/10 text-primary",
+  Serving: "bg-success/10 text-success",
+  // Referrals
+  Acknowledged: "bg-primary/10 text-primary",
+  "Not Attended": "bg-danger/10 text-danger",
+  // Attendance
   Enrolled: "bg-success/10 text-success",
   Dropped: "bg-danger/10 text-danger",
   Present: "bg-success/10 text-success",

@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Support\SequenceNumber;
+
 use App\Models\Appointment;
 use Illuminate\Http\Request;
 
@@ -87,7 +89,7 @@ class AppointmentController extends BaseController
     public function update(Request $request, Appointment $appointment)
     {
         $validated = $request->validate([
-            'scheduled_datetime' => 'date_format:Y-m-d H:i:s|after:now',
+            'scheduled_datetime' => 'date_format:Y-m-d H:i:s|after:' . self::manilaNow(),
             'notes' => 'nullable|string',
         ]);
         
@@ -106,10 +108,16 @@ class AppointmentController extends BaseController
         return $this->success(null, 'Appointment deleted');
     }
 
+    /**
+     * APT-2026-00001.
+     *
+     * The prefix was APPT- here and APT- on the portal, so the same table
+     * carried two formats depending on which door the appointment came
+     * through — and neither series could see the other's numbers. APT- is
+     * what the existing rows hold, so APT- is what both doors issue.
+     */
     private function generateAppointmentNumber(): string
     {
-        $year = date('Y');
-        $count = Appointment::whereYear('created_at', $year)->count() + 1;
-        return 'APPT-' . $year . '-' . str_pad($count, 5, '0', STR_PAD_LEFT);
+        return SequenceNumber::next('appointments', 'appointment_number', 'APT-' . date('Y') . '-', 5);
     }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -32,7 +33,6 @@ export default function Immunization() {
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState("");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [child, setChild] = useState<Resident | null>(null);
@@ -62,7 +62,6 @@ export default function Immunization() {
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!(await confirmAction({ title: "Record this immunization?", confirmText: "Yes, record" }))) return;
-    setFeedback("");
     try {
       await api.post("/health/immunization", {
         child_id: child?.id,
@@ -73,10 +72,10 @@ export default function Immunization() {
       });
       setCreateOpen(false);
       setChild(null);
-      setFeedback("Immunization record saved.");
+      toast("Immunization record saved.");
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
@@ -95,10 +94,6 @@ export default function Immunization() {
           </button>
         }
       />
-
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
 
       <Card>
         <div className="mb-4 flex flex-wrap gap-2">
@@ -151,7 +146,7 @@ export default function Immunization() {
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Record Immunization">
         <form onSubmit={create} className="space-y-4">
-          <FormField label="Child" required>
+          <FormField label="Child" required plain>
             <ResidentPicker value={child} onChange={setChild} />
           </FormField>
           <FormField label="Vaccine" required>
@@ -161,7 +156,7 @@ export default function Immunization() {
               ))}
             </select>
           </FormField>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField label="Date" required>
               <input type="date" value={vaccinationDate} onChange={(e) => setVaccinationDate(e.target.value)} required className={inputClasses} />
             </FormField>

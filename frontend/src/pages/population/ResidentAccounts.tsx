@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -11,15 +12,19 @@ import type { User } from "../../types";
 export default function ResidentAccounts() {
   const [rows, setRows] = useState<User[]>([]);
   const [search, setSearch] = useState("");
+  // "Not activated" is the list this office actually works: those accounts
+  // exist but nobody has proved the mailbox behind them is theirs.
+  const [activation, setActivation] = useState<"" | "pending" | "done">("");
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState("");
 
   const load = () => {
     setLoading(true);
     api
-      .get("/population/accounts", { params: { page, search: search || undefined } })
+      .get("/population/accounts", {
+        params: { page, search: search || undefined, activation: activation || undefined },
+      })
       .then((r) => {
         setRows(r.data.data.data ?? []);
         setLastPage(r.data.data.last_page ?? 1);
@@ -31,10 +36,20 @@ export default function ResidentAccounts() {
     const timer = setTimeout(load, 300);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, search]);
+  }, [page, search, activation]);
 
   // Live updates without a manual refresh.
   useAutoRefresh(load, REFRESH.staff);
+
+  /** "I never got the email" — sends the resident a fresh activation code. */
+  const resend = async (user: User) => {
+    try {
+      const response = await api.post(`/population/accounts/${user.id}/resend-activation`);
+      toast(response.data.message);
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    }
+  };
 
   const toggle = async (user: User) => {
     const deactivating = user.is_active !== false;
@@ -49,12 +64,11 @@ export default function ResidentAccounts() {
       }))
     )
       return;
-    setFeedback("");
     try {
       await api.post(`/population/accounts/${user.id}/toggle`);
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
@@ -62,15 +76,11 @@ export default function ResidentAccounts() {
     <div>
       <PageHeader
         title="Resident Portal Accounts"
-        subtitle="Accounts issued by this office after residency verification. Create new accounts from a resident's profile page."
+        subtitle="Created automatically when a resident is registered. Each one stays inactive until the resident enters the code emailed to them."
       />
 
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-danger/10 px-4 py-2.5 text-sm font-medium text-danger">{feedback}</p>
-      )}
-
       <Card>
-        <div className="mb-4">
+        <div className="mb-4 flex flex-wrap items-center gap-3">
           <input
             value={search}
             onChange={(e) => {
@@ -81,6 +91,29 @@ export default function ResidentAccounts() {
             placeholder="Search name or email…"
             aria-label="Search resident accounts"
           />
+          <div className="flex gap-2">
+            {(
+              [
+                ["", "All"],
+                ["pending", "Not activated"],
+                ["done", "Activated"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value || "all"}
+                type="button"
+                onClick={() => {
+                  setActivation(value);
+                  setPage(1);
+                }}
+                className={`cursor-pointer rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
+                  activation === value ? "bg-primary text-white" : "bg-secondary text-dark hover:bg-primary/10"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <DataTable
@@ -93,35 +126,63 @@ export default function ResidentAccounts() {
             },
             { header: "Purok", render: (u: User) => u.resident?.zone_purok ?? "—" },
             {
-              header: "Status",
+              // Two separate things, so they get two separate columns:
+              // whether the office allows this login at all, and whether the
+              // resident has confirmed the mailbox is theirs.
+              header: "Sign-in",
               render: (u: User) =>
                 u.is_active ? (
-                  <span className="rounded-full bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">Active</span>
+                  <span className="rounded-full bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">Enabled</span>
                 ) : (
-                  <span className="rounded-full bg-gray px-2.5 py-1 text-xs font-semibold text-gray-500">Deactivated</span>
+                  <span className="rounded-full bg-gray px-2.5 py-1 text-xs font-semibold text-gray-500">Disabled</span>
+                ),
+            },
+            {
+              header: "Email verified",
+              render: (u: User) =>
+                u.activated_at ? (
+                  <span className="text-xs text-gray-500">
+                    {new Date(u.activated_at).toLocaleDateString("en-PH")}
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-warning/10 px-2.5 py-1 text-xs font-semibold text-warning">
+                    Not activated
+                  </span>
                 ),
             },
             {
               header: "",
               render: (u: User) => (
-                <button
-                  type="button"
-                  onClick={() => toggle(u)}
-                  className={`cursor-pointer rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
-                    u.is_active
-                      ? "border border-danger/40 text-danger hover:bg-danger hover:text-white"
-                      : "border border-success/40 text-success hover:bg-success hover:text-white"
-                  }`}
-                >
-                  {u.is_active ? "Deactivate" : "Activate"}
-                </button>
+                <div className="flex flex-wrap justify-end gap-1.5">
+                  {!u.activated_at && (
+                    <button
+                      type="button"
+                      onClick={() => resend(u)}
+                      className="cursor-pointer rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
+                      title="Email this resident a fresh 6-digit activation code"
+                    >
+                      Resend code
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => toggle(u)}
+                    className={`cursor-pointer rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+                      u.is_active
+                        ? "border border-danger/40 text-danger hover:bg-danger hover:text-white"
+                        : "border border-success/40 text-success hover:bg-success hover:text-white"
+                    }`}
+                  >
+                    {u.is_active ? "Disable" : "Enable"}
+                  </button>
+                </div>
               ),
             },
           ]}
           rows={rows}
           rowKey={(u) => u.id}
           loading={loading}
-          emptyMessage="No portal accounts yet — create one from a resident's profile."
+          emptyMessage="No portal accounts match this view."
           page={page}
           lastPage={lastPage}
           onPageChange={setPage}

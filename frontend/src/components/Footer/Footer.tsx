@@ -78,7 +78,10 @@ export default function Footer() {
       </div>
 
       <div className="border-t border-white/15">
-        <p className="mx-auto max-w-7xl px-4 py-5 text-center text-sm text-white/80 sm:px-6 lg:px-8">
+        {/* Extra side room: the assistant button floats over the bottom-right
+            corner and this line is the last thing it would cover. Padded on
+            both sides so the text stays centred. */}
+        <p className="mx-auto max-w-7xl px-20 py-5 text-center text-sm text-white/80 sm:px-24 lg:px-8">
           © {year} Barangay Natumolan. All Rights Reserved.
         </p>
       </div>

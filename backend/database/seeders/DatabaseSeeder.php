@@ -30,6 +30,7 @@ class DatabaseSeeder extends Seeder
     {
         $this->seedStaff();
         $residents = $this->seedResidentsAndHouseholds();
+        $this->seedFamilies($residents);
         $this->seedPortalAccounts($residents);
         $this->seedServiceGuides();
         $this->seedAnnouncements();
@@ -63,6 +64,8 @@ class DatabaseSeeder extends Seeder
                 'role' => $role,
                 'office' => $office,
                 'is_active' => true,
+                // Staff accounts are issued by hand to a verified person.
+                'activated_at' => now(),
             ]);
         }
     }
@@ -82,7 +85,7 @@ class DatabaseSeeder extends Seeder
         // [first, middle, last, gender, age, civil, occupation, hh, class]
         $rows = [
             ['Juan', 'Reyes', 'Dela Cruz', 'Male', 34, 'Married', 'Driver', 1, null],
-            ['Ana', 'Lopez', 'Dela Cruz', 'Female', 31, 'Married', 'Vendor', 1, null],
+            ['Ana', 'Bautista', 'Dela Cruz', 'Female', 31, 'Married', 'Vendor', 1, null],
             ['Miguel', null, 'Dela Cruz', 'Male', 4, 'Single', null, 1, 'Child'],
             ['Rosa', null, 'Dela Cruz', 'Female', 1, 'Single', null, 1, 'Child'],
             ['Pedro', 'Santos', 'Bautista', 'Male', 68, 'Widowed', 'Retired', 2, 'Senior Citizen'],
@@ -111,6 +114,10 @@ class DatabaseSeeder extends Seeder
                 'resident_number' => '2026-' . str_pad($i + 1, 6, '0', STR_PAD_LEFT),
                 'first_name' => $first,
                 'middle_name' => $middle,
+                // In Philippine naming the middle name IS the mother's maiden
+                // surname — recording it separately is what tells two
+                // residents with the same name and birthday apart.
+                'mother_maiden_name' => $middle,
                 'last_name' => $last,
                 'gender' => $gender,
                 'birthdate' => now()->subYears($age)->subDays(($i * 37) % 300)->toDateString(),
@@ -153,11 +160,74 @@ class DatabaseSeeder extends Seeder
         return $residents;
     }
 
+    /**
+     * Three generations, so the family view has something to show:
+     *
+     *   Pedro & Carmen Bautista
+     *            |
+     *   Ana  ==  Juan Dela Cruz
+     *            |
+     *   Miguel, Rosa        → whose lolo and lola are Pedro and Carmen
+     *
+     * Plus two ordinary couples with a child each.
+     */
+    private function seedFamilies(array $residents): void
+    {
+        $marry = fn (int $a, int $b) => $residents[$a]->marryTo($residents[$b]);
+
+        // Both ends of the link are written: the same row reads "Father" from
+        // below and "Son" from above, so each side stores its own word.
+        $parent = function (int $childIdx, int $parentIdx, string $label) use ($residents) {
+            $residents[$childIdx]->parents()->syncWithoutDetaching([
+                $residents[$parentIdx]->id => [
+                    'parent_role' => $label,
+                    'child_role' => Resident::roleLabel($residents[$childIdx]->gender, 'child'),
+                ],
+            ]);
+        };
+
+        // Dela Cruz — the three-generation branch.
+        $marry(1, 2);
+        $parent(3, 1, 'Father');
+        $parent(3, 2, 'Mother');
+        $parent(4, 1, 'Father');
+        $parent(4, 2, 'Mother');
+        $parent(2, 5, 'Father');   // Pedro  → Ana
+        $parent(2, 6, 'Mother');   // Carmen → Ana
+
+        // Lim.
+        $marry(12, 13);
+        $parent(14, 12, 'Father');
+        $parent(14, 13, 'Mother');
+
+        // Uy.
+        $marry(22, 21);
+        $parent(20, 22, 'Father');
+        $parent(20, 21, 'Mother');
+
+        // Salcedo — a widowed mother and her son.
+        $parent(19, 18, 'Mother');
+
+        // Ramos — a solo parent.
+        $parent(8, 7, 'Mother');
+    }
+
+    /**
+     * Portal accounts.
+     *
+     * Two are seeded ready to use for the demo walkthrough, and one is left
+     * UNACTIVATED so the first-sign-in flow (default password, then the code
+     * emailed to the resident) can actually be exercised.
+     */
     private function seedPortalAccounts(array $residents): void
     {
         $bpo = $this->staff['Population Worker'];
 
         foreach ([1 => 'resident.juan@natumolan.local', 7 => 'resident.liza@natumolan.local'] as $ridx => $email) {
+            // The login address lives on the resident record too, which is
+            // what registration now reads when it issues the account.
+            $residents[$ridx]->update(['email' => $email]);
+
             User::create([
                 'name' => $residents[$ridx]->full_name,
                 'email' => $email,
@@ -165,10 +235,28 @@ class DatabaseSeeder extends Seeder
                 'role' => 'Resident',
                 'office' => 'Resident',
                 'is_active' => true,
+                'activated_at' => now(),
                 'resident_id' => $residents[$ridx]->id,
                 'created_by' => $bpo->id,
             ]);
         }
+
+        // Ana: exactly what a newly registered resident gets — the standard
+        // Lastname + MMDDYY password, and no access until she enters the code.
+        $ana = $residents[2];
+        $ana->update(['email' => 'resident.ana@natumolan.local']);
+
+        User::create([
+            'name' => $ana->full_name,
+            'email' => $ana->email,
+            'password' => User::defaultPortalPassword($ana),
+            'role' => 'Resident',
+            'office' => 'Resident',
+            'is_active' => true,
+            'activated_at' => null,
+            'resident_id' => $ana->id,
+            'created_by' => $bpo->id,
+        ]);
     }
 
     private function seedServiceGuides(): void
@@ -186,7 +274,6 @@ class DatabaseSeeder extends Seeder
             ['Health Station', 'Child Immunization', 'Routine childhood vaccines per DOH schedule.', "Child's immunization card", 'Free', 'Wed, 8AM–12NN', 'vaccine,bakuna,immunization,child,baby'],
             ['Health Station', 'Prenatal Care', 'Pregnancy registration, prenatal check-ups, and maternal counseling.', 'Valid ID', 'Free', 'Tue & Thu, 8AM–12NN', 'buntis,pregnant,prenatal,mother,delivery'],
             ['Population', 'Resident Registration & Portal Account', 'Register as a resident and request an online portal account (created by the Population Office after verification).', 'Valid ID, proof of residency', 'Free', 'Mon–Fri, 8AM–5PM', 'register,account,portal,online,login,sign up'],
-            ['CDC', 'Day Care Enrollment', 'Early childhood care and development for children aged 3–4.', 'Birth certificate, immunization card, 1x1 photo', 'Free', 'Enrollment: June–July', 'daycare,day care,cdc,enroll,child,3 years old'],
         ];
 
         foreach ($guides as [$office, $name, $desc, $req, $fees, $sched, $keywords]) {
@@ -211,7 +298,7 @@ class DatabaseSeeder extends Seeder
             ['3rd Quarter Barangay Assembly 2026', 'All residents are invited to the quarterly Barangay Assembly. The council will present accomplishment reports, budget utilization, and upcoming projects.', 'Event', 'Barangay Covered Court', '2026-08-15 09:00:00'],
             ['Free Medical & Dental Mission', 'Free check-ups, dental extraction, BP monitoring, and free medicines for all residents. First come, first served.', 'Health', 'Barangay Health Station', '2026-08-29 07:00:00'],
             ['Coastal & River Clean-Up Drive', 'Join our volunteers and officials in keeping our waterways clean. Gloves, sacks, and refreshments provided.', 'Advisory', 'Natumolan Riverside, Zone 3', '2026-09-12 06:00:00'],
-            ['SK Youth Leadership Summit', 'Whole-day summit on leadership and civic engagement for youth aged 15–30. Free registration and meals.', 'Youth', 'CDC Hall', '2026-09-26 08:00:00'],
+            ['SK Youth Leadership Summit', 'Whole-day summit on leadership and civic engagement for youth aged 15–30. Free registration and meals.', 'Youth', 'Barangay Multi-Purpose Hall', '2026-09-26 08:00:00'],
         ];
 
         foreach ($rows as $i => [$title, $body, $category, $location, $eventAt]) {
@@ -248,12 +335,31 @@ class DatabaseSeeder extends Seeder
         };
 
         $r1 = $makeRequest(1, $residents[1], 'Barangay Clearance', 'In Progress', 'Online');
-        $r2 = $makeRequest(2, $residents[5], 'Certificate of Indigency', 'Approved');
+        $r2 = $makeRequest(2, $residents[5], 'Certificate of Indigency', 'In Progress');
         $r3 = $makeRequest(3, $residents[7], 'Certificate of Residency', 'Completed', 'Online');
         $makeRequest(4, $residents[12], 'Business Barangay Clearance', 'Pending');
-        $makeRequest(5, $residents[20], 'First-Time Jobseeker Certification', 'Pending', 'Online');
+        $r5 = $makeRequest(5, $residents[20], 'First-Time Jobseeker Certification', 'Pending', 'Online');
 
-        // Pending PB approval
+        /*
+         * One certificate at each live stage of the counter workflow, so every
+         * button on the Certificates page has something to act on.
+         */
+
+        // Asked for online, nobody has started it — the clerk's queue.
+        CertificateClearance::create([
+            'certificate_number' => 'CERT-2026-000004',
+            'resident_id' => $residents[20]->id,
+            'service_request_id' => $r5->id,
+            'certificate_type' => 'First-Time Jobseeker',
+            'purpose' => 'First employment application',
+            'fee_amount' => 0,
+            'is_exempt' => true,
+            'exemption_reason' => 'First-time jobseeker (RA 11261)',
+            'status' => 'Pending',
+            'reference_number' => 'REF-DEMO0004',
+        ]);
+
+        // A clerk has it and is preparing the document.
         CertificateClearance::create([
             'certificate_number' => 'CERT-2026-000001',
             'resident_id' => $residents[1]->id,
@@ -261,11 +367,14 @@ class DatabaseSeeder extends Seeder
             'certificate_type' => 'Barangay Clearance',
             'purpose' => 'Employment requirement',
             'fee_amount' => 50,
-            'status' => 'Application',
+            'status' => 'Processing',
+            'processed_by' => $clerk->id,
+            'processed_at' => now()->subHours(3),
             'reference_number' => 'REF-DEMO0001',
         ]);
 
-        // Approved, awaiting release
+        // Printed, signed, and sitting on the counter — the resident has been
+        // told it is ready to claim.
         CertificateClearance::create([
             'certificate_number' => 'CERT-2026-000002',
             'resident_id' => $residents[5]->id,
@@ -275,13 +384,18 @@ class DatabaseSeeder extends Seeder
             'fee_amount' => 0,
             'is_exempt' => true,
             'exemption_reason' => 'Indigent senior citizen',
-            'status' => 'Approved',
-            'approved_by' => $pb->id,
-            'approved_at' => now()->subDay(),
+            'status' => 'Ready to Claim',
+            'processed_by' => $clerk->id,
+            'processed_at' => now()->subDays(2),
+            'printed_at' => now()->subDay(),
+            'signed_by' => $pb->id,
+            'signed_at' => now()->subDay(),
+            'ready_at' => now()->subDay(),
+            'qr_code' => 'qr_' . md5('REF-DEMO0002'),
             'reference_number' => 'REF-DEMO0002',
         ]);
 
-        // Fully released (public verification demo)
+        // Handed over (public verification demo)
         CertificateClearance::create([
             'certificate_number' => 'CERT-2026-000003',
             'resident_id' => $residents[7]->id,
@@ -290,10 +404,15 @@ class DatabaseSeeder extends Seeder
             'purpose' => 'School enrollment',
             'fee_amount' => 30,
             'status' => 'Released',
-            'approved_by' => $pb->id,
-            'approved_at' => now()->subDays(3),
+            'processed_by' => $clerk->id,
+            'processed_at' => now()->subDays(4),
+            'printed_at' => now()->subDays(3),
+            'signed_by' => $pb->id,
+            'signed_at' => now()->subDays(3),
+            'ready_at' => now()->subDays(3),
             'released_by' => $this->staff['Secretary']->id,
             'released_at' => now()->subDays(2),
+            'claimed_at' => now()->subDays(2),
             'qr_code' => 'qr_' . md5('REF-DEMO0003'),
             'reference_number' => 'REF-DEMO0003',
         ]);
@@ -322,12 +441,12 @@ class DatabaseSeeder extends Seeder
             'case_title' => 'Unpaid debt between neighbors',
             'case_classification' => 'Debt',
             'complainant_id' => $residents[12]->id,
-            'respondent_id' => $residents[19]->id,
             'jurisdiction_status' => 'Accepted',
             'current_stage' => 'Mediation',
             'date_filed' => now()->subDays(6)->toDateString(),
             'assigned_lupon_secretary' => $sec->id,
         ]);
+        $case1->respondents()->sync([$residents[19]->id]);
         $case1->complaint()->create([
             'complaint_narrative' => 'Respondent has not paid a P15,000 loan due since March despite repeated demands.',
             'date_of_occurrence' => now()->subMonths(3)->toDateString(),
@@ -350,13 +469,13 @@ class DatabaseSeeder extends Seeder
             'case_title' => 'Boundary fence disagreement',
             'case_classification' => 'Land Dispute',
             'complainant_id' => $residents[15]->id,
-            'respondent_id' => $residents[21]->id,
             'jurisdiction_status' => 'Accepted',
             'current_stage' => 'Settled',
             'date_filed' => now()->subDays(20)->toDateString(),
             'date_resolved' => now()->subDays(4)->toDateString(),
             'assigned_lupon_secretary' => $sec->id,
         ]);
+        $case2->respondents()->sync([$residents[21]->id]);
         $case2->complaint()->create([
             'complaint_narrative' => 'Fence constructed half a meter beyond the agreed lot boundary.',
             'date_of_occurrence' => now()->subMonth()->toDateString(),

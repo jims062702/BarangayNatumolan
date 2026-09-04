@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -10,25 +11,45 @@ import PageHeader from "../../components/UI/PageHeader";
 import FormField, { inputClasses } from "../../components/UI/FormField";
 import type { ServiceRequest } from "../../types";
 
-const SERVICE_OPTIONS = [
-  "Barangay Clearance",
-  "Certificate of Residency",
-  "Certificate of Indigency",
-  "First-Time Jobseeker Certification",
-  "Certificate of Low or No Income",
-  "Business Barangay Clearance",
-  "Other Barangay Service",
-];
+/**
+ * Everything the resident has asked the barangay for — one list.
+ *
+ * This used to be two pages. "My Requests" showed the request and "My
+ * Certificates" showed the document that came out of it: the same event,
+ * listed twice, under two different reference numbers. Worse, the two
+ * disagreed — a certificate the clerk had marked READY TO CLAIM was still
+ * shown as "In Progress" on the requests page, because that page read the
+ * request's status while the counter had moved the certificate's.
+ *
+ * A resident cannot reconcile two screens. So there is one, and where a
+ * request has produced a document, the DOCUMENT's status is what it says —
+ * that is the record that knows whether the paper exists.
+ */
+
+/** One certificate type a resident can ask for, with what it takes. */
+interface CertificateService {
+  certificate_type: string;
+  fee: number;
+  description?: string | null;
+  requirements: string[];
+  schedule?: string | null;
+}
+
+const peso = (amount: number) =>
+  amount === 0 ? "Free" : `₱${amount.toFixed(2)}`;
 
 export default function PortalRequests() {
   const [rows, setRows] = useState<ServiceRequest[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+
   const [createOpen, setCreateOpen] = useState(false);
-  const [serviceType, setServiceType] = useState(SERVICE_OPTIONS[0]);
+  const [services, setServices] = useState<CertificateService[]>([]);
+  const [serviceType, setServiceType] = useState("");
   const [purpose, setPurpose] = useState("");
-  const [feedback, setFeedback] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const load = (p = page) => {
     setLoading(true);
@@ -37,6 +58,7 @@ export default function PortalRequests() {
       .then((r) => {
         setRows(r.data.data.data ?? []);
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
       })
       .finally(() => setLoading(false));
   };
@@ -46,65 +68,135 @@ export default function PortalRequests() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
-  // Live updates: status changes appear without a manual refresh.
+  /*
+   * The fees and requirements, fetched once. They come from the office's own
+   * schedule and service guide, so what the form quotes is what the counter
+   * charges.
+   */
+  useEffect(() => {
+    api
+      .get("/portal/certificate-services")
+      .then((r) => {
+        const list: CertificateService[] = r.data.data ?? [];
+        setServices(list);
+        // Pre-selected, as the form always was — but now the choice carries
+        // its fee and papers, so the default is a statement rather than a
+        // blank the resident has to interpret.
+        if (list.length > 0) setServiceType(list[0].certificate_type);
+      })
+      .catch(() => setServices([]));
+  }, []);
+
   useAutoRefresh(() => load(), REFRESH.portal);
+
+  const chosen = services.find((s) => s.certificate_type === serviceType);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!(await confirmAction({ title: "Submit this request?", confirmText: "Yes, submit" }))) return;
-    setFeedback("");
+
+    if (
+      !(await confirmAction({
+        title: `Request a ${serviceType}?`,
+        text: chosen
+          ? `Fee at the counter: ${peso(chosen.fee)}.`
+          : undefined,
+        confirmText: "Yes, submit",
+      }))
+    )
+      return;
+
+    setSaving(true);
     try {
       await api.post("/portal/requests", { service_type: serviceType, purpose });
       setCreateOpen(false);
       setPurpose("");
-      setFeedback("Request submitted! You will be notified as it is processed.");
-      load(1);
+      toast("Request submitted! You will be notified as it is processed.");
       setPage(1);
+      load(1);
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
     <div>
       <PageHeader
-        title="My Service Requests"
-        subtitle="Submit and track your barangay service requests"
+        title="My Requests & Certificates"
+        subtitle="Everything you have asked the barangay for, and where each one has got to"
         actions={
           <button
             type="button"
             onClick={() => setCreateOpen(true)}
             className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            + New request
+            + Request a certificate
           </button>
         }
       />
-
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
 
       <Card>
         <DataTable
           columns={[
             {
-              header: "Request #",
-              render: (r: ServiceRequest) => <span className="font-medium text-dark">{r.request_number}</span>,
+              header: "Reference",
+              /*
+               * The certificate number when there is one, because that is
+               * what the clerk at the counter will ask for. The request
+               * number stays underneath: it is what the resident quoted
+               * before the document existed.
+               */
+              render: (r: ServiceRequest) => (
+                <span className="block">
+                  <span className="font-medium text-dark">
+                    {r.certificate?.certificate_number ?? r.request_number}
+                  </span>
+                  {r.certificate?.certificate_number && (
+                    <span className="mt-0.5 block text-[11px] text-gray-400">
+                      {r.request_number}
+                    </span>
+                  )}
+                </span>
+              ),
             },
-            { header: "Service", render: (r: ServiceRequest) => r.service_type },
-            { header: "Office", render: (r: ServiceRequest) => r.office },
+            {
+              header: "Service",
+              render: (r: ServiceRequest) => r.certificate?.certificate_type ?? r.service_type,
+            },
             {
               header: "Filed",
               render: (r: ServiceRequest) =>
                 r.created_at ? new Date(r.created_at).toLocaleDateString("en-PH") : "—",
             },
-            { header: "Status", render: (r: ServiceRequest) => <StatusBadge status={r.status} /> },
             {
-              header: "Certificate Ref.",
+              header: "Fee",
               render: (r: ServiceRequest) =>
                 r.certificate ? (
-                  <span className="font-mono text-xs text-primary">{r.certificate.reference_number}</span>
+                  <span className="tabular-nums">{peso(Number(r.certificate.fee_amount ?? 0))}</span>
+                ) : (
+                  <span className="text-gray-400">—</span>
+                ),
+            },
+            {
+              header: "Status",
+              /*
+               * The document's own status wins. It is the record that knows
+               * whether the paper has been printed, and it is what the clerk
+               * is looking at — two screens that disagree about one document
+               * is worse than either of them alone.
+               */
+              render: (r: ServiceRequest) => (
+                <StatusBadge status={r.certificate?.status ?? r.status} />
+              ),
+            },
+            {
+              header: "Verification ref.",
+              render: (r: ServiceRequest) =>
+                r.certificate?.reference_number ? (
+                  <span className="font-mono text-xs text-primary">
+                    {r.certificate.reference_number}
+                  </span>
                 ) : (
                   <span className="text-gray-400">—</span>
                 ),
@@ -113,26 +205,73 @@ export default function PortalRequests() {
           rows={rows}
           rowKey={(r) => r.id}
           loading={loading}
-          emptyMessage="You have not filed any requests yet."
+          emptyMessage="You have not asked for anything yet."
           page={page}
           lastPage={lastPage}
           onPageChange={setPage}
+          total={total}
+          perPage={15}
+          numbered
         />
       </Card>
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New Service Request">
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Request a certificate">
         <form onSubmit={submit} className="space-y-4">
-          <FormField label="Service" required>
+          <FormField label="Which certificate?" required>
             <select
               value={serviceType}
               onChange={(e) => setServiceType(e.target.value)}
               className={inputClasses}
             >
-              {SERVICE_OPTIONS.map((option) => (
-                <option key={option}>{option}</option>
+              {services.map((s) => (
+                <option key={s.certificate_type} value={s.certificate_type}>
+                  {s.certificate_type} — {peso(s.fee)}
+                </option>
               ))}
             </select>
           </FormField>
+
+          {/*
+            The fee and the papers, before the walk.
+
+            A resident used to pick a name from a list, walk to the office,
+            and find out at the counter that they needed a valid ID and ₱50.
+            For somebody who walked half an hour to get there, that is the
+            whole morning gone.
+          */}
+          {chosen && (
+            <div className="rounded-xl border border-gray bg-secondary/50 p-4">
+              {chosen.description && (
+                <p className="mb-3 text-xs leading-relaxed text-gray-600">{chosen.description}</p>
+              )}
+
+              <div className="flex flex-wrap items-baseline gap-2 text-sm">
+                <span className="text-gray-500">Fee at the counter:</span>
+                <span className="font-bold text-dark">{peso(chosen.fee)}</span>
+              </div>
+
+              <p className="mt-3 mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Bring with you
+              </p>
+              {chosen.requirements.length > 0 ? (
+                <ul className="list-inside list-disc space-y-0.5 text-xs text-dark">
+                  {chosen.requirements.map((r) => (
+                    <li key={r}>{r}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-gray-500">
+                  Nothing listed for this one — bring a valid ID and the office will tell you if
+                  anything else is needed.
+                </p>
+              )}
+
+              {chosen.schedule && (
+                <p className="mt-3 text-xs text-gray-500">Office hours: {chosen.schedule}</p>
+              )}
+            </div>
+          )}
+
           <FormField label="Purpose" required hint="e.g. Employment requirement, school enrollment">
             <textarea
               value={purpose}
@@ -142,11 +281,13 @@ export default function PortalRequests() {
               className={`${inputClasses} resize-none`}
             />
           </FormField>
+
           <button
             type="submit"
-            className="w-full cursor-pointer rounded-full bg-primary py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            disabled={saving || !serviceType}
+            className="w-full cursor-pointer rounded-full bg-primary py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark disabled:opacity-60"
           >
-            Submit request
+            {saving ? "Submitting…" : "Submit request"}
           </button>
         </form>
       </Modal>

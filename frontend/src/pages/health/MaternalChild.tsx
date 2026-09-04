@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -15,7 +16,6 @@ export default function MaternalChild() {
   const [maternal, setMaternal] = useState<MaternalRecord[]>([]);
   const [children, setChildren] = useState<ChildHealthRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState("");
 
   const [maternalOpen, setMaternalOpen] = useState(false);
   const [mother, setMother] = useState<Resident | null>(null);
@@ -51,7 +51,6 @@ export default function MaternalChild() {
   const saveMaternal = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!(await confirmAction({ title: "Save this maternal record?", confirmText: "Yes, save" }))) return;
-    setFeedback("");
     try {
       await api.post("/health/maternal-health", {
         mother_id: mother?.id,
@@ -62,17 +61,16 @@ export default function MaternalChild() {
       });
       setMaternalOpen(false);
       setMother(null);
-      setFeedback("Maternal record saved.");
+      toast("Maternal record saved.");
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
   const saveChild = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!(await confirmAction({ title: "Save this child health record?", confirmText: "Yes, save" }))) return;
-    setFeedback("");
     try {
       await api.post("/health/child-health", {
         child_id: childRes?.id,
@@ -83,20 +81,16 @@ export default function MaternalChild() {
       });
       setChildOpen(false);
       setChildRes(null);
-      setFeedback("Child health record saved.");
+      toast("Child health record saved.");
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
   return (
     <div>
       <PageHeader title="Maternal & Child Health" subtitle="Prenatal registry and child growth / nutrition monitoring" />
-
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
 
       <div className="grid gap-6 xl:grid-cols-2">
         <Card
@@ -162,10 +156,10 @@ export default function MaternalChild() {
 
       <Modal open={maternalOpen} onClose={() => setMaternalOpen(false)} title="Register / update pregnancy">
         <form onSubmit={saveMaternal} className="space-y-4">
-          <FormField label="Mother" required>
+          <FormField label="Mother" required plain>
             <ResidentPicker value={mother} onChange={setMother} />
           </FormField>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField label="Registration date" required>
               <input type="date" value={regDate} onChange={(e) => setRegDate(e.target.value)} required className={inputClasses} />
             </FormField>
@@ -191,13 +185,13 @@ export default function MaternalChild() {
 
       <Modal open={childOpen} onClose={() => setChildOpen(false)} title="Record child health">
         <form onSubmit={saveChild} className="space-y-4">
-          <FormField label="Child" required>
+          <FormField label="Child" required plain>
             <ResidentPicker value={childRes} onChange={setChildRes} />
           </FormField>
           <FormField label="Birth date" required>
             <input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} required className={inputClasses} />
           </FormField>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField label="Weight (kg)">
               <input type="number" step="0.1" value={weight} onChange={(e) => setWeight(e.target.value)} className={inputClasses} />
             </FormField>

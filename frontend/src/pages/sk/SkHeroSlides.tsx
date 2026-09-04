@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -11,7 +12,6 @@ import type { HeroSlide } from "../../types";
 export default function SkHeroSlides() {
   const [slides, setSlides] = useState<HeroSlide[]>([]);
   const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState("");
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null); // null = add mode
   const [title, setTitle] = useState("");
@@ -55,7 +55,6 @@ export default function SkHeroSlides() {
     if (!editId && !file) return; // a new slide needs an image
     if (!(await confirmAction({ title: "Save this home picture?", confirmText: "Yes, save" }))) return;
     setSaving(true);
-    setFeedback("");
     try {
       const form = new FormData();
       form.append("title", title);
@@ -65,16 +64,16 @@ export default function SkHeroSlides() {
       if (editId) {
         form.append("_method", "PUT");
         await api.post(`/sk/hero-slides/${editId}`, form, { headers: { "Content-Type": "multipart/form-data" } });
-        setFeedback("Home picture updated.");
+        toast("Home picture updated.");
       } else {
         form.append("sort_order", String(slides.length));
         await api.post("/sk/hero-slides", form, { headers: { "Content-Type": "multipart/form-data" } });
-        setFeedback("Home picture added — it now shows on the public site.");
+        toast("Home picture added — it now shows on the public site.");
       }
       setOpen(false);
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     } finally {
       setSaving(false);
     }
@@ -126,10 +125,6 @@ export default function SkHeroSlides() {
           </button>
         }
       />
-
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
 
       {loading && slides.length === 0 ? (
         <p className="py-10 text-center text-sm text-gray-400">Loading…</p>

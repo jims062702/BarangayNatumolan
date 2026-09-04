@@ -203,7 +203,12 @@ class HealthController extends BaseController
     {
         $year = $request->input('year', date('Y'));
 
-        $residents = Resident::where('is_active', true)->count();
+        /*
+         * The denominator of every coverage figure below. Counting
+         * relatives who live in other towns understates immunisation and
+         * prenatal coverage against a population the station never serves.
+         */
+        $residents = Resident::bonafide()->where('is_active', true)->count();
         $healthVisits = HealthVisit::whereYear('visit_date', $year)->count();
         $immunized = ImmunizationRecord::whereYear('vaccination_date', $year)
             ->where('status', 'Completed')

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -9,14 +10,13 @@ import PageHeader from "../../components/UI/PageHeader";
 import FormField, { inputClasses } from "../../components/UI/FormField";
 import type { ServiceGuide } from "../../types";
 
-const OFFICES = ["Main Office", "VAWC", "Lupon", "Population", "Health Station", "CDC"];
+const OFFICES = ["Main Office", "VAWC", "Lupon", "Population", "Health Station", "SK"];
 
 export default function ServiceGuidesManage() {
   const [rows, setRows] = useState<ServiceGuide[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState("");
 
   const [open, setOpen] = useState(false);
   const [office, setOffice] = useState(OFFICES[0]);
@@ -48,7 +48,6 @@ export default function ServiceGuidesManage() {
 
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setFeedback("");
     try {
       await api.post("/manage/service-guides", {
         office,
@@ -64,10 +63,10 @@ export default function ServiceGuidesManage() {
       setServiceName("");
       setDescription("");
       setRequirements("");
-      setFeedback("Service guide added — the assistant will use it immediately.");
+      toast("Service guide added — the assistant will use it immediately.");
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
@@ -85,7 +84,7 @@ export default function ServiceGuidesManage() {
       await api.delete(`/manage/service-guides/${guide.id}`);
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
@@ -104,10 +103,6 @@ export default function ServiceGuidesManage() {
           </button>
         }
       />
-
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
 
       <Card>
         <DataTable

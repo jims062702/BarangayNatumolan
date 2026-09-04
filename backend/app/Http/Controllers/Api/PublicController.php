@@ -34,13 +34,19 @@ class PublicController extends BaseController
             ], 'Verification complete');
         }
 
+        /*
+         * A certificate is genuine from the moment it is signed — that is the
+         * act that makes the paper real — so verification succeeds for one
+         * waiting on the counter as well as one already handed over. Anything
+         * still being prepared, or cancelled, is not a document yet.
+         */
         return $this->success([
-            'valid' => in_array($certificate->status, ['Approved', 'Released']),
+            'valid' => in_array($certificate->status, ['Ready to Claim', 'Released'], true),
             'certificate_number' => $certificate->certificate_number,
             'certificate_type' => $certificate->certificate_type,
             'holder' => $certificate->resident?->full_name,
             'status' => $certificate->status,
-            'issued_at' => $certificate->released_at ?? $certificate->approved_at,
+            'issued_at' => $certificate->released_at ?? $certificate->signed_at,
         ], 'Verification complete');
     }
 
@@ -83,9 +89,12 @@ class PublicController extends BaseController
     public function stats()
     {
         $stats = Cache::remember(LandingCache::STATS_KEY, now()->addHour(), fn () => [
-            'registered_residents' => Resident::where('is_active', true)->count(),
+            // `bonafide` matters here: relatives who live outside the
+            // barangay are on the register so families can be recorded, and
+            // counting them would overstate the population publicly.
+            'registered_residents' => Resident::bonafide()->where('is_active', true)->count(),
             'households' => Household::count(),
-            'puroks' => Resident::where('is_active', true)
+            'puroks' => Resident::bonafide()->where('is_active', true)
                 ->whereNotNull('zone_purok')
                 ->distinct()
                 ->count('zone_purok'),
@@ -214,7 +223,7 @@ class PublicController extends BaseController
                 'answer' => 'I could not match your question to a specific service. '
                     . 'You may visit the Barangay Main Office (Mon–Fri, 8:00 AM–5:00 PM) '
                     . 'or browse the offices: Main Office, VAWC Desk, Lupon Tagapamayapa, '
-                    . 'Population Office, Health Station, and Child Development Center.',
+                    . 'Population Office, and the Health Station.',
                 'matches' => [],
             ], 'Assistant response');
         }

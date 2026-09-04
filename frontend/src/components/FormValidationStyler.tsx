@@ -102,10 +102,28 @@ export default function FormValidationStyler() {
       }
     };
 
+    /*
+     * Re-check the field that changed — and every other field still showing
+     * an error.
+     *
+     * The sweep is the important half. React sets a controlled input's value
+     * as a DOM property, which fires NO input event, so a field filled in by
+     * another field's onChange kept its red outline and its "This field is
+     * required" while plainly holding text. Anything the user types anywhere
+     * is a good moment to ask whether the marked fields are still wrong.
+     *
+     * Cheap: it only ever looks at fields currently carrying the class, and
+     * there are never many.
+     */
     const onLiveCheck = (e: Event) => {
-      if (!isField(e.target)) return;
-      const el = e.target;
-      if (el.classList.contains(INVALID_CLASS) && el.validity.valid) clearError(el);
+      if (isField(e.target)) {
+        const el = e.target;
+        if (el.classList.contains(INVALID_CLASS) && el.validity.valid) clearError(el);
+      }
+
+      document.querySelectorAll<Field>('.' + INVALID_CLASS).forEach((el) => {
+        if (el.validity.valid) clearError(el);
+      });
     };
 
     // `invalid` does not bubble → listen in the capture phase.

@@ -62,8 +62,54 @@ input::-ms-clear {
   }
 }
 
+/* ---------------------------------------------------------------------------
+   Pulse ring for the floating chat button
+
+   Tailwind's `animate-ping` ends at scale(2), which on a 56px button reaches
+   28px past every edge. The button sits 16px from the right, so the ring
+   pushed the DOCUMENT 12px wider than the viewport — a transformed element
+   still counts toward scroll width. That gave the whole landing page a
+   sideways scroll, which in turn parked the hamburger and the chat button
+   itself outside the visible area and stretched the fixed header beyond it.
+
+   scale(1.5) reaches 14px, so the ring now stays inside the 16px inset and
+   the page has nothing to scroll sideways to.
+--------------------------------------------------------------------------- */
+@keyframes ping-contained {
+  75%,
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+.animate-ping-contained {
+  animation: ping-contained 2.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
 html {
   scroll-behavior: smooth;
+
+  /*
+   * No sideways scrolling, ever.
+   *
+   * The landing sections slide in from the left and right (<Reveal>), so until
+   * `whileInView` fires each one sits parked 44px outside the page. A
+   * transform does not affect layout, but it DOES count toward scrollWidth —
+   * and on a phone Chrome sizes the layout viewport from scrollWidth. So a
+   * 375px screen got a 404px layout viewport, which is why `fixed inset-x-0`
+   * stretched the header to 404px and parked the navbar's hamburger and the
+   * chat button ~13px outside the visible area, reachable only by panning.
+   *
+   * A slide-in from the edge has to start off the edge, so the overflow is
+   * clipped rather than removed. It must sit on the ROOT element: overflow on
+   * <html> is what propagates to the viewport, and clipping <body> alone left
+   * scrollWidth — and therefore the layout viewport — still inflated.
+   *
+   * `clip` and not `hidden`: `hidden` turns the root into a scroll container,
+   * which breaks `position: sticky` on the dashboard topbar.
+   */
+  overflow-x: clip;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -84,6 +130,39 @@ section[id] {
 ::selection {
   background-color: var(--color-primary);
   color: #ffffff;
+}
+
+/* ---------------------------------------------------------------------------
+   Thumb-sized controls on phones
+
+   Row and list controls are written for a mouse: `py-1.5 text-xs` renders at
+   26px tall, and a few bare text buttons at 16px. That is fine for a cursor
+   and a coin-flip for a thumb, so on phones every button and pill-styled link
+   inside the page body gets a 36px floor.
+
+   `min-height` only ever raises the floor, so icon buttons already sized
+   h-9/h-10 are untouched. Inline links inside prose are deliberately excluded
+   — stretching them would break the line height of the paragraph holding them.
+--------------------------------------------------------------------------- */
+@media (max-width: 639px) {
+  main button,
+  main a[class*="rounded-full"],
+  main a[class*="rounded-lg"],
+  main a[class*="rounded-xl"] {
+    min-height: 36px;
+  }
+
+  /* A raised floor only helps if the label sits in the middle of it. */
+  main button:not([class*="items-"]),
+  main a[class*="rounded-"]:not([class*="items-"]) {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* Full-width submit buttons must keep their centred label. */
+  main button[class*="w-full"]:not([class*="justify-"]) {
+    justify-content: center;
+  }
 }
 
 /* ---------------------------------------------------------------------------

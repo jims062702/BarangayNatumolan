@@ -1,5 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
+import { personName } from "../../lib/names";
+import { ageFromBirthdate } from "../../components/ResidentFormFields";
+import { FiEdit2 } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -10,19 +15,26 @@ import FormField, { inputClasses } from "../../components/UI/FormField";
 import ResidentPicker from "../../components/ResidentPicker";
 import type { Household, Resident } from "../../types";
 
+
+// @frezieh palambing ko dol
+
 export default function HouseholdList() {
   const [rows, setRows] = useState<Household[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState("");
 
-  const [createOpen, setCreateOpen] = useState(false);
+  // One modal for both add and edit — editingId null = adding.
+  const [modalOpen, setModalOpen] = useState(false);
+  /** The household whose members are being read, if any. */
+  const [viewing, setViewing] = useState<Household | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [number, setNumber] = useState("");
   const [zone, setZone] = useState("Purok 1");
   const [address, setAddress] = useState("");
   const [houseType, setHouseType] = useState("Concrete");
   const [head, setHead] = useState<Resident | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -43,26 +55,49 @@ export default function HouseholdList() {
   // Live updates without a manual refresh.
   useAutoRefresh(load, REFRESH.staff);
 
-  const create = async (event: FormEvent<HTMLFormElement>) => {
+
+  const openEdit = (h: Household) => {
+    setEditingId(h.id);
+    setNumber(h.household_number ?? "");
+    setZone(h.zone_purok ?? "Purok 1");
+    setAddress(h.street_address ?? "");
+    setHouseType(h.house_type ?? "Concrete");
+    setHead(h.head ?? null);
+    setModalOpen(true);
+  };
+
+  const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!(await confirmAction({ title: "Add this household?", confirmText: "Yes, add" }))) return;
-    setFeedback("");
+    const editing = editingId !== null;
+    if (
+      !(await confirmAction({
+        title: editing ? "Save changes to this household?" : "Add this household?",
+        confirmText: editing ? "Yes, save" : "Yes, add",
+      }))
+    )
+      return;
+    setSaving(true);
+    const payload = {
+      household_number: number,
+      zone_purok: zone,
+      street_address: address,
+      house_type: houseType,
+      household_head_id: head?.id ?? null,
+    };
     try {
-      await api.post("/population/households", {
-        household_number: number,
-        zone_purok: zone,
-        street_address: address,
-        house_type: houseType,
-        household_head_id: head?.id,
-      });
-      setCreateOpen(false);
-      setNumber("");
-      setAddress("");
-      setHead(null);
-      setFeedback("Household registered.");
+      if (editing) {
+        await api.put(`/population/households/${editingId}`, payload);
+        toast("Household updated.");
+      } else {
+        await api.post("/population/households", payload);
+        toast("Household registered.");
+      }
+      setModalOpen(false);
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -71,20 +106,7 @@ export default function HouseholdList() {
       <PageHeader
         title="Household Registry"
         subtitle="Shared population registry — the Main Office verifies records against this list"
-        actions={
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
-          >
-            + Register household
-          </button>
-        }
       />
-
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
 
       <Card>
         <DataTable
@@ -107,8 +129,47 @@ export default function HouseholdList() {
                 ),
             },
             {
+              /*
+                A count that opens.
+
+                Every name inline made each row three lines tall and pushed
+                the address into a column an inch wide — a registry of two
+                hundred households became unscannable to answer a question
+                asked of one. So the number stays in the table and the names
+                are one click away.
+              */
               header: "Members",
-              render: (h: Household) => (h.residents ?? []).length,
+              render: (h: Household) => {
+                const count = (h.residents ?? []).length;
+
+                if (count === 0) {
+                  return <span className="text-gray-400">Nobody yet</span>;
+                }
+
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setViewing(h)}
+                    className="cursor-pointer rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary/20"
+                  >
+                    {count} {count === 1 ? "person" : "people"}
+                  </button>
+                );
+              },
+            },
+            {
+              header: "",
+              render: (h: Household) => (
+                <button
+                  type="button"
+                  onClick={() => openEdit(h)}
+                  title="Edit household"
+                  aria-label="Edit household"
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-gray px-3 py-1.5 text-xs font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
+                >
+                  <FiEdit2 className="h-3.5 w-3.5" /> Edit
+                </button>
+              ),
             },
           ]}
           rows={rows}
@@ -128,8 +189,103 @@ export default function HouseholdList() {
         />
       </Card>
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Register Household">
-        <form onSubmit={create} className="space-y-4">
+      {/*
+        Who lives here.
+
+        The head is first and said to be the head, because "who owns this
+        house" is the question this registry is opened for. Everybody else
+        follows in the order the register holds them.
+      */}
+      <Modal
+        open={viewing !== null}
+        onClose={() => setViewing(null)}
+        title={viewing ? `${viewing.household_number} — who lives here` : ""}
+      >
+        {viewing && (
+          <div>
+            <p className="mb-4 text-xs leading-relaxed text-gray-500">
+              {[viewing.street_address, viewing.zone_purok].filter(Boolean).join(" · ")
+                || "No address recorded"}
+            </p>
+
+            {/*
+              A name on its own answers nothing. Two Juan Dela Cruzes in one
+              household are the same row twice until something tells them
+              apart, and "who is the child here" is the question this list is
+              opened for — so sex, age and what they are to the head travel
+              with the name.
+            */}
+            <ul className="space-y-2">
+              {[...(viewing.residents ?? [])]
+                .sort((a, b) => {
+                  // The head first, then the oldest down — a household reads
+                  // the way it is spoken about.
+                  if (a.id === viewing.head?.id) return -1;
+                  if (b.id === viewing.head?.id) return 1;
+                  return String(a.birthdate ?? "").localeCompare(String(b.birthdate ?? ""));
+                })
+                .map((person) => {
+                  const age = ageFromBirthdate(String(person.birthdate ?? ""));
+
+                  return (
+                    <li
+                      key={person.id}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray px-3 py-2.5"
+                    >
+                      <div className="min-w-0">
+                        <Link
+                          to={`/residents/${person.id}`}
+                          className="block text-sm font-semibold text-primary hover:underline"
+                        >
+                          {personName(person)}
+                        </Link>
+                        <p className="mt-0.5 text-xs text-gray-500">
+                          {[
+                            person.resident_number,
+                            person.gender,
+                            age !== null ? `${age} years old` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                      </div>
+
+                      {person.relation_to_head && (
+                        <span
+                          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                            person.relation_to_head === "Head"
+                              ? "bg-primary text-white"
+                              : "bg-primary/10 text-primary"
+                          }`}
+                        >
+                          {person.relation_to_head}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+            </ul>
+
+            {/*
+              A head who is not among the members is somebody who moved out
+              without the register being told — or who is recorded as heading
+              two houses at once. Saying so is more use than quietly listing
+              one person fewer.
+            */}
+            {viewing.head
+              && !(viewing.residents ?? []).some((r) => r.id === viewing.head?.id) && (
+              <p className="mt-3 rounded-xl bg-warning/10 px-3 py-2 text-xs leading-relaxed text-amber-700">
+                <strong>{personName(viewing.head)}</strong> is recorded as the head of this
+                household but is not living in it. Either they have moved and the register was
+                not told, or the head needs setting again.
+              </p>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={editingId ? "Edit Household" : "Register Household"}>
+        <form onSubmit={save} className="space-y-4">
           <FormField label="Household number" required>
             <input value={number} onChange={(e) => setNumber(e.target.value)} required className={inputClasses} placeholder="HH-2026-0009" />
           </FormField>
@@ -150,11 +306,15 @@ export default function HouseholdList() {
               <option>Light materials</option>
             </select>
           </FormField>
-          <FormField label="Household head (owner)" hint="Search a resident — they become the identified owner of this household">
+          <FormField label="Household head (owner)" hint="Search a resident — they become the identified owner of this household" plain>
             <ResidentPicker value={head} onChange={setHead} />
           </FormField>
-          <button type="submit" className="w-full cursor-pointer rounded-full bg-primary py-2.5 text-sm font-semibold text-white hover:bg-primary-dark">
-            Register
+          <button
+            type="submit"
+            disabled={saving}
+            className="w-full cursor-pointer rounded-full bg-primary py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark disabled:opacity-60"
+          >
+            {saving ? "Saving…" : editingId ? "Save changes" : "Register"}
           </button>
         </form>
       </Modal>

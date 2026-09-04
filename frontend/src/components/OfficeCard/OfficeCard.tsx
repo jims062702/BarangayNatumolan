@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { FiClock, FiMapPin, FiUser } from "react-icons/fi";
 import Button from "../Button/Button";
@@ -82,9 +83,9 @@ export default function OfficeCard({ office }: OfficeCardProps) {
         <p className="mt-4 text-sm leading-relaxed text-gray-600">{office.description}</p>
         <p className="mt-4 rounded-xl bg-primary/5 px-4 py-3 text-sm text-gray-600">
           Walk in during office hours, or{" "}
-          <a href="/login" className="font-semibold text-primary hover:underline">
+          <Link to="/login" className="font-semibold text-primary hover:underline">
             sign in to the resident portal
-          </a>{" "}
+          </Link>{" "}
           to request services online.
         </p>
       </Modal>

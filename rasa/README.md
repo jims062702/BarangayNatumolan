@@ -16,7 +16,7 @@ Python 3.11 and the `rasa/.venv` virtual environment are already prepared.
 If you ever need to redo it:
 
 ```powershell
-cd "c:\xampp8.2\htdocs\Barangay Natumolan\rasa"
+cd "c:\xampp\htdocs\Barangay Natumolan\rasa"
 py -3.11 -m venv .venv          # Rasa needs Python 3.10–3.12 (not 3.13)
 .venv\Scripts\pip install rasa-pro
 ```
@@ -31,7 +31,7 @@ environment variable (the name rasa-pro 3.18 expects).
 ## Train + run
 
 ```powershell
-cd "c:\xampp8.2\htdocs\Barangay Natumolan\rasa"
+cd "c:\xampp\htdocs\Barangay Natumolan\rasa"
 powershell -ExecutionPolicy Bypass -File start-rasa.ps1
 ```
 

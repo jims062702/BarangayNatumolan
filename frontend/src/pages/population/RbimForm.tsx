@@ -1,0 +1,2532 @@
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useNavigate, useParams, Link } from "react-router-dom";
+import {
+  FiPlus, FiX, FiArrowLeft, FiChevronDown, FiChevronRight,
+  FiCheck, FiAlertTriangle, FiLoader,
+} from "react-icons/fi";
+import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
+import { confirmAction } from "../../lib/confirm";
+import Card from "../../components/UI/Card";
+import PageHeader from "../../components/UI/PageHeader";
+import StatusBadge from "../../components/UI/StatusBadge";
+import FormField, { inputClasses } from "../../components/UI/FormField";
+import Modal from "../../components/UI/Modal";
+import type { Resident } from "../../types";
+
+/**
+ * The RBIM baseline census form.
+ *
+ * The paper is a wide grid — ten people across nine spreads, carried by line
+ * number. That is right for a clipboard and wrong for a screen: forty-four
+ * columns cannot be read at once on anything, and an encoder scrolling
+ * sideways loses which row they are on.
+ *
+ * So each person is a card, and the card is divided the way the paper is
+ * divided. The sections collapse because most of them do not apply to most
+ * people: a nine-year-old has no economic activity, a man has no family
+ * planning answers, and a non-migrant has no migration story. Showing all
+ * forty-four for everybody is how an encoder starts skipping.
+ */
+
+type Codes = Record<string, Record<string, string>>;
+
+/** What the household-number check answers. */
+interface HouseCheck {
+  exists: boolean;
+  household_number?: string;
+  census?: {
+    id: number;
+    census_no: string;
+    status: string;
+    household_head_name: string;
+    members_count: number;
+  };
+  household?: {
+    id: number;
+    household_number: string;
+    zone_purok?: string | null;
+    street_address?: string | null;
+    head?: { id: number; first_name: string; last_name: string } | null;
+  };
+  residents?: {
+    id: number;
+    resident_number: string;
+    first_name: string;
+    middle_name?: string | null;
+    last_name: string;
+    gender?: string | null;
+    birthdate?: string | null;
+  }[];
+  resident_count?: number;
+  censuses?: {
+    id: number;
+    census_no: string;
+    status: string;
+    members_count: number;
+    household_head_name: string;
+  }[];
+}
+
+interface Member {
+  [key: string]: string | number | null | undefined;
+  last_name: string;
+  first_name: string;
+  middle_name: string;
+}
+
+const BLANK_MEMBER: Member = { last_name: "", first_name: "", middle_name: "" };
+
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/**
+ * The years a living person could have been born in.
+ *
+ * Newest first: a census records far more thirty-year-olds than
+ * hundred-year-olds, and a list that opens at 1906 makes the common case the
+ * longest scroll.
+ */
+const BIRTH_YEARS = Array.from(
+  { length: 120 },
+  (_, i) => new Date().getFullYear() - i
+);
+
+/**
+ * The form's own skip code.
+ *
+ * Printed in the margin — "For SKIPPED questions, write 99" — and then said
+ * precisely: Q11 is 99 below five, Q12 to Q14 are 99 below three and at
+ * twenty-five and over. It means "asked, does not apply", which is a
+ * different answer from a box nobody filled in.
+ */
+const SKIPPED = "99";
+
+/**
+ * Where this register is.
+ *
+ * Named once. The three address boxes are read-only on the form, so a form
+ * that arrived without them would show three blanks nobody could fix.
+ */
+const PUROKS = ["Purok 1", "Purok 2", "Purok 3", "Purok 4", "Purok 5"];
+
+const HOME = {
+  province: "Misamis Oriental",
+  city_municipality: "Tagoloan",
+  barangay: "Natumolan",
+};
+
+/**
+ * Whether the chosen code is the list's "Others" entry.
+ *
+ * Read from the list itself rather than hard-coded: the code differs per
+ * question — 5 for lighting fuel, 6 for cooking, 12 for water, 18 for skills
+ * — and a table of magic numbers here would drift from the model that owns
+ * them.
+ */
+function isOther(value: unknown, list?: Record<string, string>): boolean {
+  if (value === null || value === undefined || value === "") return false;
+
+  return /^other/i.test(list?.[String(value)] ?? "");
+}
+
+/**
+ * One letter, written the way an initial is written.
+ *
+ * "l", "L" and "L." are the same answer; which of them the register ends up
+ * holding should not depend on whether the encoder reached for the full stop.
+ * An empty box stays empty — plenty of people have no middle name, and "."
+ * on its own is not one.
+ */
+function asInitial(typed: string): string {
+  const letter = typed.replace(/[^A-Za-zÑñ]/g, "").slice(0, 1).toUpperCase();
+
+  return letter === "" ? "" : `${letter}.`;
+}
+
+/**
+ * "Dela Cruz, Juan R." into its three parts.
+ *
+ * The form asks for the head as "Last Name, First Name M.I." and then asks
+ * for the same person again on line 1 — the head is always line 1, that is
+ * what Q2 code 01 means. Typing the name twice is two chances to spell it
+ * differently, and the two spellings then belong to two different people as
+ * far as anything reading them is concerned.
+ *
+ * The comma is what the form itself uses to separate the surname, so it is
+ * what is read. Everything after the first comma is given names; the last
+ * word of those is taken as the middle initial only when it looks like one —
+ * "Juan R." gives R., while "Juan Miguel" is left whole, because a second
+ * given name is not an initial.
+ */
+function splitHeadName(full: string): { last: string; first: string; middle: string } {
+  const [surname, ...rest] = full.split(",");
+  const given = rest.join(",").trim();
+
+  if (!given) {
+    return { last: surname.trim(), first: "", middle: "" };
+  }
+
+  const words = given.split(/\s+/).filter(Boolean);
+  const tail = words[words.length - 1] ?? "";
+
+  // An initial: one letter, optionally with a full stop.
+  const isInitial = words.length > 1 && /^[A-Za-zÑñ]\.?$/.test(tail);
+
+  return {
+    last: surname.trim(),
+    first: (isInitial ? words.slice(0, -1) : words).join(" "),
+    /*
+     * Upper-cased and given its full stop, because line 1 shows it read-only:
+     * whatever this returns is what the register carries, and nobody
+     * downstream can correct it by hand.
+     */
+    middle: isInitial ? `${tail.replace(/\.$/, "").toUpperCase()}.` : "",
+  };
+}
+
+/**
+ * Age at last birthday, from a birth month and year.
+ *
+ * The census asks for a month and a year and no day, so the turn-over is put
+ * at the END of the birth month: somebody born in June is 32 for all of June
+ * and 33 from July. That is the safe direction to be wrong in — it never
+ * makes anybody older than they are, so nobody reaches a senior citizen's
+ * entitlement or passes a youth programme's cut-off a month early.
+ *
+ * Derived rather than typed, so it is right tomorrow as well as today. An age
+ * written into a box is a fact about the day it was written.
+ */
+function ageFromMonthYear(month: unknown, year: unknown): number | null {
+  const m = Number(month);
+  const y = Number(year);
+
+  if (!m || !y || m < 1 || m > 12 || y < 1900) return null;
+
+  const now = new Date();
+  const monthsElapsed = (now.getFullYear() - y) * 12 + (now.getMonth() + 1 - m);
+
+  // A month and year still ahead of us is a mis-typed line, not a person.
+  if (monthsElapsed < 0) return null;
+
+  const age = now.getFullYear() - y - (now.getMonth() + 1 <= m ? 1 : 0);
+
+  /*
+   * Clamped, for the newborn. A baby born THIS month has no completed year
+   * and comes out of the sum as -1; they are 0, and a blank age box on the
+   * one line most likely to need a health visit is the worst place for this
+   * to go quiet.
+   */
+  return Math.max(age, 0);
+}
+
+/** Age at last birthday, the way Q4 asks for it. */
+function ageFrom(birthdate?: string | null): number | null {
+  if (!birthdate) return null;
+
+  const born = new Date(birthdate);
+  if (Number.isNaN(born.getTime())) return null;
+
+  const now = new Date();
+  let age = now.getFullYear() - born.getFullYear();
+
+  // "At last birthday" — not yet had it this year means one less.
+  const monthDiff = now.getMonth() - born.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < born.getDate())) age -= 1;
+
+  return age >= 0 ? age : null;
+}
+
+/** Whether an age puts a question outside the band the form asks it in. */
+/**
+ * Is this box answered?
+ *
+ * 0 and 99 are answers — "no income" and "does not apply" are both things a
+ * household said. Only an empty box is unanswered.
+ */
+function answered(value: unknown): boolean {
+  return value !== null && value !== undefined && String(value).trim() !== "";
+}
+
+/**
+ * How far through a section this line is.
+ *
+ * The list is written at the call site as the section's own questions, with
+ * a conditional one dropped in as `condition && "key"` — so what is counted
+ * sits beside what is rendered and the two cannot quietly drift apart.
+ *
+ * A question this person should not be asked is not counted, in the
+ * numerator or the denominator. Counting them would leave every adult stuck
+ * at "Infant health 0/5" for good, which reads as broken and is the surest
+ * way to teach an encoder to start inventing answers to clear it.
+ */
+function progressOf(keys: (string | false | null | undefined)[], member: Member) {
+  const asked = keys.filter(Boolean) as string[];
+
+  return {
+    total: asked.length,
+    filled: asked.filter((key) => answered(member[key])).length,
+  };
+}
+
+/** The inverse of `outOfBand`: an unknown age cannot be ruled out of anything. */
+function inBand(age: unknown, min: number, max?: number): boolean {
+  return !outOfBand(age, min, max);
+}
+
+/**
+ * Family planning is asked of women 10 to 54.
+ *
+ * An unanswered Q3 counts as applicable. Hiding a whole section because one
+ * earlier box is still blank is how a section gets skipped for good.
+ */
+function maybeWoman(member: Member, sexes?: Record<string, string>): boolean {
+  const label = sexes?.[String(member.q3_sex ?? "")] ?? "";
+
+  return label === "" || /female|babae/i.test(label);
+}
+
+/**
+ * Are Q13 and Q14 still being asked?
+ *
+ * The paper prints "FOR 3-24 YEARS OLD" over Q12–Q14 and its notes say to
+ * write 99 from twenty-five up. That upper bound is not kept here, because
+ * it is not true: people go back to school at any age — ALS, a degree
+ * finished late, a senior citizen enrolled — and a locked box would make the
+ * form record a 99 that the household would say is wrong.
+ *
+ * What is kept is Q12's own instruction, printed on the same page: "If No,
+ * SKIP to Q15". So Q13 and Q14 follow the answer to Q12 rather than a
+ * birthday. That is both what the form says and what is actually so — a
+ * person not enrolled has no school level and no place of school, whether
+ * they are nine or ninety.
+ *
+ * An unanswered Q12 leaves them open. A blank box is not a No.
+ */
+function schoolDetailsApply(member: Member): boolean {
+  if (outOfBand(member.q4_age, 3)) return false;
+
+  const enrolled = String(member.q12_enrolled ?? "");
+
+  return enrolled === "" || enrolled === "1" || enrolled === "2";
+}
+
+function outOfBand(age: unknown, min: number, max?: number): boolean {
+  const n = Number(age);
+  if (age === null || age === undefined || age === "" || Number.isNaN(n)) return false;
+
+  return n < min || (max !== undefined && n > max);
+}
+
+/**
+ * A labelled select over one of the form's numbered code lists.
+ *
+ * `skipped` is the case where the question was asked and does not apply —
+ * an age band, or an earlier answer that the paper skips forward from. The
+ * paper records that as 99, so the box is locked and says so, rather than
+ * being left open for an encoder to answer something that cannot be true.
+ */
+function Coded({
+  label,
+  list,
+  value,
+  onChange,
+  hint,
+  neededToRegister = false,
+  skipped = false,
+  skippedNote,
+  lockedTo,
+  lockedNote,
+}: {
+  label: string;
+  list?: Record<string, string>;
+  value: string | number | null | undefined;
+  onChange: (v: string) => void;
+  hint?: string;
+  /**
+   * Starred, but not enforced by the browser.
+   *
+   * These are what REGISTERING needs, and a draft is allowed to be
+   * half-finished — the whole point of the state. Marking them with the
+   * browser's own `required` would block Save as draft, so the star says
+   * what will be wanted and the check before submitting is what insists.
+   */
+  neededToRegister?: boolean;
+  skipped?: boolean;
+  skippedNote?: string;
+  /**
+   * Pinned to one code because the answer is not in question — Q2 on line 1
+   * is Head, and nothing about the form can make it otherwise.
+   */
+  lockedTo?: string | number;
+  lockedNote?: string;
+}) {
+  const pinned = lockedTo !== undefined;
+
+  return (
+    <FormField
+      label={label}
+      required={neededToRegister}
+      hint={pinned ? lockedNote : skipped ? skippedNote : hint}
+    >
+      <select
+        value={pinned ? String(lockedTo) : skipped ? SKIPPED : (value ?? "")}
+        disabled={skipped || pinned}
+        onChange={(e) => onChange(e.target.value)}
+        className={`${inputClasses} ${
+          skipped || pinned ? "cursor-not-allowed bg-secondary text-gray-400" : ""
+        }`}
+      >
+        <option value="">—</option>
+        {skipped && <option value={SKIPPED}>99 · Not applicable at this age</option>}
+        {Object.entries(list ?? {}).map(([code, text]) => (
+          <option key={code} value={code}>
+            {code} · {text}
+          </option>
+        ))}
+      </select>
+    </FormField>
+  );
+}
+
+/** A plain dropdown over values that are not one of the form's code lists. */
+function Choice({
+  label,
+  options,
+  value,
+  onChange,
+  hint,
+  neededToRegister = false,
+  placeholder = "—",
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  value: string | number | null | undefined;
+  onChange: (v: string) => void;
+  hint?: string;
+  /** Starred but not browser-enforced — see the note on Coded. */
+  neededToRegister?: boolean;
+  placeholder?: string;
+}) {
+  return (
+    <FormField label={label} required={neededToRegister} hint={hint}>
+      <select
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+        className={inputClasses}
+      >
+        <option value="">{placeholder}</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </FormField>
+  );
+}
+
+/**
+ * A text box that can be switched off.
+ *
+ * Two cases need that, and they are the same case: a box whose question does
+ * not apply. "If not Filipino" is dead while the answer is Filipino, and
+ * "Others, please specify" is dead until Others is chosen. Leaving them open
+ * invites an answer that contradicts the one beside it.
+ */
+function Text({
+  label,
+  value,
+  onChange,
+  placeholder,
+  hint,
+  type = "text",
+  required = false,
+  disabled = false,
+  disabledNote,
+  maxLength,
+  uppercase = false,
+  readOnly = false,
+}: {
+  label: string;
+  value: string | number | null | undefined;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  hint?: string;
+  type?: string;
+  required?: boolean;
+  disabled?: boolean;
+  disabledNote?: string;
+  maxLength?: number;
+  /** For an initial: what is typed is what is stored, in one case. */
+  uppercase?: boolean;
+  /**
+   * Shown but not editable — for a value that is genuinely typed somewhere
+   * else. Not `disabled`: a disabled input is skipped by the browser's own
+   * required-check, and these still have to be filled.
+   */
+  readOnly?: boolean;
+}) {
+  return (
+    <FormField label={label} hint={disabled ? (disabledNote ?? hint) : hint} required={required}>
+      <input
+        type={type}
+        value={disabled ? "" : (value ?? "")}
+        maxLength={maxLength}
+        onChange={(e) => onChange(uppercase ? e.target.value.toUpperCase() : e.target.value)}
+        placeholder={disabled ? "" : placeholder}
+        required={required && !disabled}
+        disabled={disabled}
+        readOnly={readOnly}
+        /*
+          One look for every box that cannot be typed in.
+
+          Disabled and read-only are different to the browser and identical
+          to the person: both mean "not yours to change here". Two shades of
+          grey for one meaning just makes the clerk wonder which is which.
+        */
+        className={`${inputClasses} ${
+          disabled || readOnly ? "cursor-not-allowed bg-secondary text-gray-400" : ""
+        }`}
+      />
+    </FormField>
+  );
+}
+
+/**
+ * The email box, which checks itself as it is typed.
+ *
+ * A portal account is issued against an email address and against nothing
+ * else, so `residents.email` is unique and two people cannot share one. The
+ * moment to discover a clash is while the BHW is still standing at the door
+ * and can ask for a second address — not weeks later, when the line is being
+ * matched and the address is quietly dropped because somebody else holds it.
+ *
+ * Checked as it is typed rather than behind a button. A button is one per
+ * line, ten lines to a form, and the one nobody remembers to press is
+ * exactly the one that was wrong.
+ *
+ * Not everything it finds is an error. The commonest hit by far is that this
+ * IS the person — a head already on the register being written onto a form —
+ * so the box names who holds the address and lets the office decide.
+ */
+function EmailField({
+  value,
+  onChange,
+  censusId,
+  residentId,
+  clashLine,
+  disabled = false,
+}: {
+  value: string | number | null | undefined;
+  onChange: (v: string) => void;
+  censusId?: string;
+  /** Who this line is already matched to — their own address is not a clash. */
+  residentId?: number | null;
+  /** Another line on this same form holding the same address, if any. */
+  clashLine: number | null;
+  disabled?: boolean;
+}) {
+  const [checking, setChecking] = useState(false);
+  const [result, setResult] = useState<{ available: boolean; message: string } | null>(null);
+
+  const typed = String(value ?? "").trim();
+
+  useEffect(() => {
+    if (!typed) {
+      setResult(null);
+      setChecking(false);
+      return;
+    }
+
+    setChecking(true);
+    setResult(null);
+
+    /*
+     * A pause, because this fires on a keystroke: without it the office is
+     * told "that is not an email address" while still typing the domain.
+     */
+    const timer = setTimeout(() => {
+      api
+        .get("/rbim/check-email", {
+          params: { email: typed, census_id: censusId, resident_id: residentId ?? undefined },
+        })
+        .then((r) =>
+          setResult({ available: r.data.data.available, message: r.data.message })
+        )
+        .catch(() => setResult(null))
+        .finally(() => setChecking(false));
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [typed, censusId, residentId]);
+
+  // A clash inside this one form needs no server to see, so it is said first.
+  const onFormClash = clashLine !== null && typed !== "";
+  const bad = onFormClash || (result !== null && !result.available);
+
+  return (
+    <div>
+      <FormField
+        label="Email address"
+        hint="What their portal login is issued to. Without one, they cannot sign in."
+      >
+        <input
+          type="email"
+          value={String(value ?? "")}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          className={[
+            inputClasses,
+            disabled ? "cursor-not-allowed bg-secondary text-gray-400" : "",
+            bad ? "border-red-400" : "",
+          ].join(" ")}
+        />
+      </FormField>
+
+      {onFormClash ? (
+        <p className="mt-1 flex items-start gap-1.5 text-xs text-red-600">
+          <FiAlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>
+            Line {clashLine} on this form already has this address. One login belongs to
+            one person, so only one of them can keep it.
+          </span>
+        </p>
+      ) : checking ? (
+        <p className="mt-1 flex items-center gap-1.5 text-xs text-gray-500">
+          <FiLoader className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" />
+          Checking…
+        </p>
+      ) : result ? (
+        <p
+          className={
+            "mt-1 flex items-start gap-1.5 text-xs " +
+            (result.available ? "text-green-700" : "text-amber-700")
+          }
+        >
+          {result.available ? (
+            <FiCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          ) : (
+            <FiAlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          )}
+          <span>{result.message}</span>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * What a census line already answers about a person, in the register's own
+ * words.
+ *
+ * The resident form starts every field empty on purpose — a default there is
+ * a guess that becomes fact the moment nobody notices it. A census answer is
+ * not a guess: it is what the household said, written down at the door. So
+ * these carry, and only these.
+ *
+ * What deliberately does NOT carry:
+ *
+ *   birthdate  Q5 asks the month and the year. The register stores a date,
+ *              and there is no day in a census to put in it. Inventing the
+ *              first of the month would be a made-up birthday on a permanent
+ *              record.
+ *   education  Q11's fourteen codes and the register's list are different
+ *              vocabularies. A rough mapping would be wrong more often than
+ *              blank is.
+ *   residency  Nobody asked. Q36 is worked out from Q33–Q35, and that is not
+ *              the same question.
+ */
+/** One collapsible block of the paper form. */
+function Section({
+  title,
+  note,
+  children,
+  openByDefault = false,
+  progress,
+}: {
+  title: string;
+  note?: string;
+  children: React.ReactNode;
+  openByDefault?: boolean;
+  /**
+   * How many of this section's questions are answered.
+   *
+   * On the header, because the sections are folded shut: without it the only
+   * way to find the one box still missing is to open all nine and read them.
+   */
+  progress?: { filled: number; total: number };
+}) {
+  const [open, setOpen] = useState(openByDefault);
+
+  return (
+    <div className="rounded-xl border border-gray bg-white">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full cursor-pointer items-center gap-2 px-4 py-3 text-left"
+      >
+        {open ? (
+          <FiChevronDown className="h-4 w-4 shrink-0 text-gray-400" aria-hidden="true" />
+        ) : (
+          <FiChevronRight className="h-4 w-4 shrink-0 text-gray-400" aria-hidden="true" />
+        )}
+        <span className="text-sm font-semibold text-dark">{title}</span>
+        {note && <span className="text-xs text-gray-400">· {note}</span>}
+
+        {/*
+          Nothing is required here, so this counts rather than complains.
+          A form can be submitted with gaps — a household that would not
+          answer Q23 is a fact, not a mistake — and the count is there to
+          show what is left, not to stand in the way.
+        */}
+        {progress && (
+          <span className="ml-auto shrink-0">
+            {progress.total === 0 ? (
+              <span className="text-xs text-gray-400">Not asked</span>
+            ) : progress.filled === progress.total ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-700">
+                <FiCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                Complete
+              </span>
+            ) : (
+              <span
+                className={
+                  "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold " +
+                  (progress.filled === 0
+                    ? "bg-secondary text-gray-500"
+                    : "bg-amber-50 text-amber-700")
+                }
+              >
+                {progress.filled}/{progress.total}
+              </span>
+            )}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="grid grid-cols-1 gap-x-5 gap-y-4 border-t border-gray p-4 sm:grid-cols-2 lg:grid-cols-3">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function RbimForm() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+
+  const editing = Boolean(id);
+
+  const [codes, setCodes] = useState<{ member: Codes; household: Codes }>({
+    member: {},
+    household: {},
+  });
+  const [form, setForm] = useState<Record<string, string | number | boolean | null>>({
+    household_head_name: "",
+    ...HOME,
+    is_institutional: false,
+    consent_given: false,
+  });
+  const [members, setMembers] = useState<Member[]>([{ ...BLANK_MEMBER }]);
+  const [status, setStatus] = useState<"Draft" | "Submitted">("Draft");
+  const [censusNo, setCensusNo] = useState("");
+  const [matches, setMatches] = useState<Record<number, Resident | null>>({});
+  const [checking, setChecking] = useState(false);
+  const [houseCheck, setHouseCheck] = useState<HouseCheck | null>(null);
+  /*
+   * What Submit found missing. Held in state rather than shown as a toast,
+   * because it is a list to work through, not a notification.
+   */
+  const [gaps, setGaps] = useState<string[]>([]);
+  /*
+   * Submitting creates people. A confirmation dialogue with a list of names
+   * in it is not enough to check a form of ten against a paper sheet — the
+   * office needs to see the answers, laid out the way they were typed.
+   */
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  /*
+   * People the register already places in this household who are not on
+   * this sheet.
+   *
+   * Checked when an existing form opens, because that is the moment the
+   * office is about to add "the rest of the household" and has no way of
+   * knowing who that is.
+   */
+  const [notOnSheet, setNotOnSheet] = useState<HouseCheck | null>(null);
+  /*
+   * What the form looked like when it was last saved or loaded.
+   *
+   * Verifying a different number throws the sheet away and starts again, so
+   * something has to know whether there was anything worth keeping. A
+   * snapshot compared as text is enough here — the form is small, and the
+   * question is only "is this the same as what is stored".
+   */
+  const pristine = useRef("");
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(editing);
+
+  useEffect(() => {
+    api.get("/rbim/code-lists").then((r) => setCodes(r.data.data));
+  }, []);
+
+  /*
+   * A brand-new sheet starts clean.
+   *
+   * The snapshot began life as an empty string, so an untouched form
+   * compared unequal to it and counted as unsaved work — pressing Verify on
+   * a blank sheet asked whether to save nothing. An existing form takes its
+   * own snapshot when it loads.
+   */
+  useEffect(() => {
+    if (!editing) pristine.current = snapshot();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!editing) return;
+
+    api
+      .get(`/rbim/${id}`)
+      .then((r) => {
+        const data = r.data.data;
+        // A form saved through the API may carry none of these; the boxes
+        // cannot be typed in, so they are filled here or not at all.
+        setForm({
+          ...data,
+          province: data.province || HOME.province,
+          city_municipality: data.city_municipality || HOME.city_municipality,
+          barangay: data.barangay || HOME.barangay,
+        });
+        setStatus(data.status);
+        setCensusNo(data.census_no);
+        setMembers(data.members?.length ? data.members : [{ ...BLANK_MEMBER }]);
+
+        // Who each line already is on the register, so the card can say so.
+        const matched: Record<number, Resident | null> = {};
+        (data.members ?? []).forEach((m: Record<string, unknown>, i: number) => {
+          matched[i] = (m.resident as Resident) ?? null;
+        });
+        setMatches(matched);
+        // Loaded from the server, so nothing is unsaved yet.
+        pristine.current = snapshot(data, data.members ?? [{ ...BLANK_MEMBER }]);
+
+        /*
+         * And who the register says lives here.
+         *
+         * This is the question "Continue editing — add the rest there" is
+         * asking on the office's behalf, so it is answered on arrival rather
+         * than left for them to work out by opening the household in another
+         * tab and comparing names by eye.
+         *
+         * A failure here is silence: the form is perfectly usable without
+         * the offer, and an error banner about a convenience would only be
+         * in the way.
+         */
+        if (data.census_no) {
+          api
+            .get("/rbim/verify-household", {
+              params: { household_number: data.census_no, census_id: id },
+            })
+            .then((h) => setNotOnSheet(h.data.data))
+            .catch(() => setNotOnSheet(null));
+        }
+      })
+      .finally(() => setLoading(false));
+  }, [editing, id]);
+
+  const set = (key: string, value: string | number | boolean | null) =>
+    setForm((prev) => ({ ...prev, [key]: value }));
+
+  /**
+   * Puts the head's name on line 1.
+   *
+   * Only while line 1 is still the head: once somebody has typed a different
+   * name there, the grid is the record and this stops touching it. Silently
+   * overwriting a line an encoder has already filled in is worse than making
+   * them type the name twice.
+   */
+  /**
+   * Line 1 IS the household head.
+   *
+   * The form says so in its own margin — "List HH members in this order:
+   * Head, Spouse of Head, …" — and Q2 code 01 is Head. So the name is not
+   * copied across on a best-effort basis; line 1 simply holds whatever the
+   * head field holds, and there is no way for the two to disagree.
+   *
+   * An earlier version only filled line 1 while it looked untouched, so that
+   * a hand-typed line would not be clobbered. That guard is what let the head
+   * say "Dela Cruz, Juan" while line 1 said "Miguel": two answers to one
+   * question, and no way to tell which the barangay meant.
+   */
+  const fillLineOneFrom = (full: string) => {
+    const parts = splitHeadName(full);
+
+    setMembers((prev) => {
+      const first = prev[0] ?? { ...BLANK_MEMBER };
+
+      return [
+        {
+          ...first,
+          last_name: parts.last,
+          first_name: parts.first,
+          middle_name: parts.middle,
+          // Q2 code 01. The head is the head.
+          q2_relationship: 1,
+        },
+        ...prev.slice(1),
+      ];
+    });
+  };
+
+  /*
+   * A yes/no, kept as 1 and 0.
+   *
+   * Every other answer on a line is text or one of the form's numbered
+   * codes, and `setMember` turns "" into null — which is right for a box
+   * somebody cleared and wrong for a switch somebody turned off. Laravel's
+   * boolean rule takes 1 and 0, so the wire is happy and the type stays as
+   * narrow as the other forty-four answers.
+   */
+  const setMemberFlag = (index: number, key: string, on: boolean) =>
+    setMembers((prev) => prev.map((m, i) => (i === index ? { ...m, [key]: on ? 1 : 0 } : m)));
+
+  const setMember = (index: number, key: string, value: string) =>
+    setMembers((prev) =>
+      prev.map((m, i) => (i === index ? { ...m, [key]: value === "" ? null : value } : m))
+    );
+
+  /**
+   * Which other line on this form already carries a member's address.
+   *
+   * The register cannot hold one address twice, so a form that collects one
+   * twice is a form that will lose a login at matching time. Both lines are
+   * flagged: until one of them changes, neither is right.
+   */
+  const clashingLine = (index: number): number | null => {
+    const email = String(members[index]?.email ?? "").trim().toLowerCase();
+    if (!email) return null;
+
+    const other = members.findIndex(
+      (m, i) => i !== index && String(m.email ?? "").trim().toLowerCase() === email
+    );
+
+    return other === -1 ? null : other + 1;
+  };
+
+  // Lines with a name on them — a blank card the clerk has not filled in
+  // yet is not a person.
+  const filledLines = members.filter((mem) => mem.first_name || mem.last_name).length;
+
+  /** Empty strings out, so a blank box is absent rather than an empty answer. */
+  const clean = (source: Record<string, unknown>) => {
+    const out: Record<string, unknown> = {};
+    Object.entries(source).forEach(([k, v]) => {
+      if (v === "" || v === undefined) return;
+      // The server owns these; sending them back invites a stale write.
+      /*
+        The server owns these. census_no is NOT among them: the paper form
+        carries a number in its own boxes, and a clerk copying that number
+        across is the point of the field — stripping it here meant the box
+        accepted typing and threw it away.
+      */
+      if (["id", "created_at", "updated_at", "members", "resident", "recorder",
+           "reviewer", "household", "status", "members_count",
+           "submitted_at", "reviewed_at", "reviewed_by", "recorded_by",
+           "rbim_census_id", "resident_id"].includes(k)) return;
+      out[k] = v;
+    });
+    return out;
+  };
+
+  /**
+   * Everything a clerk could have typed, as one comparable string.
+   *
+   * The form NUMBER is left out on purpose. It is the thing being checked,
+   * not work to be rescued — counting it meant that typing a number and
+   * pressing Verify on an otherwise empty sheet asked whether to save the
+   * number first, which is a question about nothing.
+   */
+  const snapshot = (
+    f: Record<string, unknown> = form,
+    mem: Member[] = members
+  ) => {
+    const { census_no: _ignored, ...rest } = clean(f);
+
+    return JSON.stringify({ f: rest, m: mem.map((one) => clean(one)) });
+  };
+
+  const isDirty = () => snapshot() !== pristine.current;
+
+  /** Back to an empty sheet, keeping the number that was just checked. */
+  const resetForm = (keepNumber: string) => {
+    const blank = {
+      census_no: keepNumber,
+      household_head_name: "",
+      ...HOME,
+      is_institutional: false,
+      consent_given: false,
+    };
+
+    setForm(blank);
+    setMembers([{ ...BLANK_MEMBER }]);
+    pristine.current = snapshot(blank, [{ ...BLANK_MEMBER }]);
+  };
+
+  /**
+   * Asks whether this house is already on the register.
+   *
+   * It only asks. Joining the existing household, correcting a mistyped
+   * number, or stopping to go back and ask the respondent are three
+   * different decisions, and none of them is safe to make automatically.
+   */
+  const verifyHouse = async () => {
+    const number = String(form.census_no ?? "").trim();
+    if (!number) return;
+
+    /*
+     * Checking a number means starting that household's sheet — so anything
+     * already typed is about to go. Asked before the check runs, not after:
+     * by then the clerk has read an answer and is deciding on it, and a
+     * dialogue about the previous household is an interruption in the wrong
+     * place.
+     */
+    if (isDirty()) {
+      const keep = await confirmAction({
+        title: "Save what is on this form first?",
+        text:
+          "Checking another number starts that household's sheet, and what is typed here "
+          + "has not been saved.",
+        confirmText: "Save first",
+        cancelText: "Discard it",
+      });
+
+      if (keep) {
+        // Stay put: they pressed Verify, not Save. Bouncing them to the list
+        // would take away the number they were in the middle of checking.
+        await save(undefined, false);
+        return;
+      }
+    }
+
+    setChecking(true);
+    setHouseCheck(null);
+    try {
+      const r = await api.get("/rbim/verify-household", {
+        // Not this form. Otherwise verifying the number already on it
+        // reported the form itself as a clash and offered a link back to
+        // the page the office was already on.
+        params: { household_number: number, census_id: id },
+      });
+      setHouseCheck(r.data.data);
+
+      if (!r.data.data.exists) {
+        /*
+         * A free number is a new household, so the sheet starts empty. The
+         * number itself is kept — it is what the clerk just typed and just
+         * checked.
+         */
+        resetForm(number);
+      }
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  /**
+   * Carries who the register already says lives here onto the grid.
+   *
+   * The office is not starting from nothing: the household exists and its
+   * people are on the register. Making the encoder retype names the system
+   * already holds is how a household ends up with two spellings of the same
+   * person — so the lines are laid out first, and the visit fills in what
+   * the census asks that the register does not.
+   *
+   * Lines already typed are kept. Anyone matching one by name is not added
+   * again.
+   */
+  const continueHousehold = () => {
+    const house = houseCheck?.household;
+    if (!house) return;
+
+    bringOntoForm(house, houseCheck?.residents ?? []);
+    setHouseCheck(null);
+  };
+
+  /*
+   * The merge itself, shared by both ways in: verifying a number before the
+   * form is started, and opening a census that already exists. The second
+   * had no way to do this at all — "Continue editing" opened the form and
+   * left the household's registered people behind, which is the one thing
+   * the button is for.
+   */
+  const bringOntoForm = (
+    house: NonNullable<HouseCheck["household"]>,
+    people: NonNullable<HouseCheck["residents"]>
+  ) => {
+    set("household_id", house.id);
+
+    const typed = members.filter((mem) => mem.first_name || mem.last_name);
+
+    const already = new Set(
+      typed.map((mem) =>
+        `${String(mem.first_name).trim()}|${String(mem.last_name).trim()}`.toLowerCase()
+      )
+    );
+
+    const carried: Member[] = people
+      .filter(
+        (r) => !already.has(`${r.first_name.trim()}|${r.last_name.trim()}`.toLowerCase())
+      )
+      .map((r) => ({
+        last_name: r.last_name,
+        first_name: r.first_name,
+        // One letter: the grid asks for an initial.
+        middle_name: (r.middle_name ?? "").trim().charAt(0).toUpperCase(),
+        q3_sex: r.gender === "Male" ? 1 : r.gender === "Female" ? 2 : null,
+        q4_age: ageFrom(r.birthdate),
+        q5_birth_month: r.birthdate ? Number(r.birthdate.slice(5, 7)) : null,
+        q5_birth_year: r.birthdate ? Number(r.birthdate.slice(0, 4)) : null,
+      }));
+
+    /*
+     * The head goes to line 1, and everybody else follows in the order the
+     * form asks for. Whoever the register calls the head of this house is
+     * the head on this sheet — dropping them into line 4 because that is
+     * where the alphabet put them would contradict Q2 on their own line.
+     */
+    const headId = house.head?.id;
+    const rest = [...typed, ...carried].filter(
+      (mem) =>
+        !headId ||
+        `${mem.first_name}|${mem.last_name}`.toLowerCase() !==
+          `${house.head!.first_name}|${house.head!.last_name}`.toLowerCase()
+    );
+
+    if (house.head) {
+      const headName = `${house.head.last_name}, ${house.head.first_name}`;
+      set("household_head_name", headName);
+
+      // fillLineOneFrom owns line 1, so it is written the same way here as
+      // it is when somebody types the name by hand.
+      setMembers([{ ...BLANK_MEMBER }, ...rest]);
+      fillLineOneFrom(headName);
+    } else {
+      setMembers(rest.length ? rest : [{ ...BLANK_MEMBER }]);
+    }
+
+    toast(
+      carried.length
+        ? `${carried.length} person(s) already on the register were carried onto the form.`
+        : "Everyone on the register for this household is already on the form."
+    );
+  };
+
+  /**
+   * Which of the household's registered people are missing from the grid.
+   *
+   * By name, the same comparison the merge uses — a line typed by hand and a
+   * resident record are the same person if the names match, and offering to
+   * add somebody already on the sheet is how a household ends up on it
+   * twice.
+   */
+  const missingFromSheet = (): NonNullable<HouseCheck["residents"]> => {
+    const people = notOnSheet?.residents ?? [];
+
+    const typed = new Set(
+      members
+        .filter((mem) => mem.first_name || mem.last_name)
+        .map((mem) =>
+          `${String(mem.first_name ?? "").trim()}|${String(mem.last_name ?? "").trim()}`.toLowerCase()
+        )
+    );
+
+    return people.filter(
+      (r) => !typed.has(`${r.first_name.trim()}|${r.last_name.trim()}`.toLowerCase())
+    );
+  };
+
+  /**
+   * What the register still needs, line by line.
+   *
+   * The same rules the server applies, worked out here so the office reads
+   * them on the form instead of in a toast. A toast is one sentence that
+   * appears after the press and is gone four seconds later — which is how a
+   * clerk ends up pressing Submit three times without ever learning that
+   * line 4 has no sex on it.
+   *
+   * Only the lines that will actually be registered. A visiting cousin
+   * switched off is nobody's missing birthday.
+   */
+  const registrationGaps = (): string[] => {
+    const gaps: string[] = [];
+
+    if (!String(form.zone_purok ?? "").trim()) {
+      gaps.push("The purok, at the top of the form — every resident record carries one.");
+    }
+
+    if (!form.consent_given) {
+      gaps.push("The respondent's consent, at the bottom — the census may not be used without it.");
+    }
+
+    members.forEach((mem, index) => {
+      const named = String(mem.first_name ?? "").trim() || String(mem.last_name ?? "").trim();
+      if (!named) return;
+
+      // Line 1 is the head and is always registered, switch or no switch.
+      const willRegister = index === 0 || Number(mem.register_as_resident ?? 1) === 1;
+      if (!willRegister) return;
+
+      // Somebody already on the register is not re-checked; they are done.
+      if (matches[index]) return;
+
+      const missing: string[] = [];
+
+      if (!String(mem.first_name ?? "").trim()) missing.push("a first name (Q1)");
+      if (!String(mem.last_name ?? "").trim()) missing.push("a surname (Q1)");
+      if (![1, 2].includes(Number(mem.q3_sex))) missing.push("sex (Q3)");
+      if (!Number(mem.q5_birth_month)) missing.push("a birth month (Q5)");
+      if (!Number(mem.q5_birth_year)) missing.push("a birth year (Q5)");
+
+      if (missing.length) {
+        const who = `${mem.first_name ?? ""} ${mem.last_name ?? ""}`.trim();
+        gaps.push(`Line ${index + 1}${who ? ` (${who})` : ""} needs ${missing.join(", ")}.`);
+      }
+    });
+
+    return gaps;
+  };
+  /**
+   * `thenLeave` is false only when saving is a step inside submitting: the
+   * office pressed Submit, the form had unsaved edits, and leaving for the
+   * list halfway through would abandon the thing they actually asked for.
+   */
+  const save = async (event?: FormEvent, thenLeave = true) => {
+    event?.preventDefault();
+    setSaving(true);
+
+    const payload = {
+      ...clean(form),
+      // The counted value, not whatever the field last held — the box is
+      // read-only now and the grid is the answer.
+      total_members: filledLines,
+      members: members
+        .filter((m) => m.first_name || m.last_name)
+        .map((m, i) => ({ ...clean(m), line_no: i + 1 })),
+    };
+
+    try {
+      if (editing) {
+        await api.put(`/rbim/${id}`, payload);
+        pristine.current = snapshot();
+        toast("Census form saved.");
+
+        /*
+         * Back to the list, because that is where a saved form can be SEEN
+         * to be saved. Staying on the page leaves the office looking at the
+         * same boxes they were looking at before, trusting a toast that is
+         * about to disappear.
+         */
+        if (thenLeave) navigate("/population/rbim");
+      } else {
+        const r = await api.post("/rbim", payload);
+        pristine.current = snapshot();
+        toast(r.data.message);
+
+        /*
+         * A new draft goes to the list too, for the same reason a saved one
+         * does: the row appearing there is what the office can SEE. Landing
+         * back on the form they were already looking at asks them to trust a
+         * toast that is about to disappear.
+         */
+        navigate(thenLeave ? "/population/rbim" : `/population/rbim/${r.data.data.id}`, {
+          replace: true,
+        });
+      }
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /**
+   * Registers the household.
+   *
+   * Everything on the form becomes a resident record and each line is joined
+   * to the person it made, so the census and the register cannot drift into
+   * being two accounts of one household. Pressing it again after an edit adds
+   * only whoever is new — which is what makes a form that gains a baby six
+   * months later still the right form.
+   *
+   * Confirmed by name first, because it is the one press in this module that
+   * writes to the register.
+   */
+  const submitForm = async () => {
+    // What is on screen has to be what gets registered.
+    if (isDirty()) {
+      const keep = await confirmAction({
+        title: "Save this form first?",
+        text: "The saved answers are what would be registered, not the ones on screen.",
+        confirmText: "Save and continue",
+        cancelText: "Stay here",
+      });
+
+      if (!keep) return;
+      // Stay here: the submit is the next thing that happens.
+      await save(undefined, false);
+    }
+
+    /*
+     * Everything the register will need, before anything is sent.
+     *
+     * The server refuses an incomplete sheet as a whole and says why, which
+     * is right — but it says it in a toast, and a toast is gone before an
+     * office of one has finished reading the second line of it.
+     */
+    const gaps = registrationGaps();
+
+    if (gaps.length) {
+      setGaps(gaps);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      toast(`${gaps.length} thing(s) still missing — listed at the top of the form.`, "warning");
+      return;
+    }
+
+    setGaps([]);
+
+    // Everything checked; now let them read it before it becomes people.
+    setPreviewOpen(true);
+  };
+
+  /** What Submit does once the office has read the preview and agreed. */
+  const registerHousehold = async () => {
+    setRegistering(true);
+
+    try {
+      const r = await api.post(`/rbim/${id}/submit`);
+      setPreviewOpen(false);
+      toast(r.data.message);
+
+      // Back to the list, where the row now reads Submitted. Seeing it there
+      // is the proof; a toast on the form they were already on is not.
+      navigate("/population/rbim");
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    } finally {
+      setRegistering(false);
+    }
+  };
+
+  if (loading) {
+    return <p className="p-6 text-sm text-gray-500">Loading the census form…</p>;
+  }
+
+  const m = codes.member;
+  const h = codes.household;
+
+  return (
+    <div>
+      <PageHeader
+        title={editing ? `Census ${censusNo}` : "New RBIM census form"}
+        subtitle="Baseline Census for the Registry of Barangay Inhabitants & Migrants"
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {editing && <StatusBadge status={status} />}
+            <Link
+              to="/population/rbim"
+              className="inline-flex items-center gap-2 rounded-full border border-gray bg-white px-4 py-2 text-sm font-semibold text-dark transition-colors hover:border-primary"
+            >
+              <FiArrowLeft className="h-4 w-4" aria-hidden="true" /> All forms
+            </Link>
+          </div>
+        }
+      />
+
+      {/*
+        What Submit found missing, at the top where the office is looking.
+
+        It stays until it is fixed, and it re-checks itself as they type, so
+        the list shrinks under their hands. A toast said the same thing once
+        and then took it away.
+      */}
+      {gaps.length > 0 && (
+        <Card className="mb-4 border-danger/40">
+          <p className="flex items-center gap-2 text-sm font-bold text-danger">
+            <FiAlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {registrationGaps().length === 0
+              ? "All set — press Submit again."
+              : `${registrationGaps().length} thing(s) needed before this household can be registered`}
+          </p>
+
+          {registrationGaps().length > 0 && (
+            <>
+              <ul className="mt-2 space-y-1">
+                {registrationGaps().map((gap) => (
+                  <li key={gap} className="flex gap-2 text-xs leading-relaxed text-gray-700">
+                    <span className="text-danger">•</span>
+                    <span>{gap}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-xs leading-relaxed text-gray-500">
+                The boxes are starred on the form. Nothing here stops you saving a draft —
+                it is only registering that needs them.
+              </p>
+            </>
+          )}
+        </Card>
+      )}
+
+      {/*
+        The last look before a form becomes people.
+
+        Submitting writes resident records, and the office is working from a
+        paper sheet they cannot see at the same time as the screen. What they
+        need at this moment is the answers they typed, laid out to be read
+        against that sheet — not a dialogue box with a list of names in it,
+        which proves nothing about whether line 4's birth year is right.
+      */}
+      <Modal
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        size="xl"
+        title={status === "Draft" ? "Check before registering" : "Check before registering anybody new"}
+      >
+        <div className="space-y-4">
+          <p className="text-xs leading-relaxed text-gray-500">
+            Read this against the paper sheet. Submitting puts everybody marked below on the
+            barangay register; anybody already there is left alone.
+          </p>
+
+          <div className="rounded-xl border border-gray p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+              A. Identification
+            </p>
+            <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
+              {[
+                ["Form no.", String(form.census_no ?? "—")],
+                ["Household head", String(form.household_head_name ?? "—")],
+                ["Purok", String(form.zone_purok ?? "—")],
+                ["Address", [form.address_unit, form.address_house_lot, form.address_street]
+                  .map((x) => String(x ?? "").trim()).filter(Boolean).join(", ") || "—"],
+                ["Respondent", String(form.respondent_name ?? "—")],
+                ["Total members", String(filledLines)],
+              ].map(([label, value]) => (
+                <div key={label} className="flex justify-between gap-4">
+                  <dt className="text-gray-500">{label}</dt>
+                  <dd className="text-right font-medium text-dark">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+
+          <div className="max-h-[24rem] space-y-2 overflow-y-auto">
+            {members.map((mem, index) => {
+              const named = String(mem.first_name ?? "").trim()
+                || String(mem.last_name ?? "").trim();
+              if (!named) return null;
+
+              const willRegister = index === 0
+                || Number(mem.register_as_resident ?? 1) === 1;
+              const already = matches[index];
+
+              return (
+                <div key={index} className="rounded-xl border border-gray p-3">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-bold text-dark">
+                      Line {index + 1} · {mem.first_name} {mem.middle_name} {mem.last_name}
+                    </p>
+                    {already ? (
+                      <span className="rounded-full bg-secondary px-2.5 py-0.5 text-[11px] font-semibold text-gray-500">
+                        Already on the register
+                      </span>
+                    ) : willRegister ? (
+                      <span className="rounded-full bg-green-50 px-2.5 py-0.5 text-[11px] font-semibold text-green-700">
+                        Will be registered
+                      </span>
+                    ) : (
+                      /*
+                        Said plainly, because this is the last moment it can be
+                        changed — and a line silently left off is how somebody
+                        goes uncounted for a year.
+                      */
+                      <span className="rounded-full bg-warning/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700">
+                        Not being registered
+                      </span>
+                    )}
+                  </div>
+
+                  <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-xs sm:grid-cols-3">
+                    {[
+                      ["Q2 Relationship", m.relationships?.[String(mem.q2_relationship ?? "")] ?? "—"],
+                      ["Q3 Sex", m.sexes?.[String(mem.q3_sex ?? "")] ?? "—"],
+                      ["Q4 Age", mem.q4_age != null ? String(mem.q4_age) : "—"],
+                      ["Q5 Born", [
+                        MONTHS[Number(mem.q5_birth_month) - 1],
+                        mem.q5_birth_year,
+                      ].filter(Boolean).join(" ") || "—"],
+                      ["Q8 Marital status", m.marital_statuses?.[String(mem.q8_marital_status ?? "")] ?? "—"],
+                      ["Q35 Length of stay", [
+                        mem.q35_stay_years != null ? `${mem.q35_stay_years}y` : null,
+                        mem.q35_stay_months != null ? `${mem.q35_stay_months}m` : null,
+                      ].filter(Boolean).join(" ") || "—"],
+                      ["Email", String(mem.email ?? "") || "—"],
+                      ["Phone", String(mem.contact_number ?? "") || "—"],
+                    ].map(([label, value]) => (
+                      <div key={label} className="flex justify-between gap-3">
+                        <dt className="text-gray-400">{label}</dt>
+                        <dd className="text-right font-medium text-dark">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap justify-end gap-2 border-t border-gray pt-4">
+            <button
+              type="button"
+              onClick={() => setPreviewOpen(false)}
+              className="cursor-pointer rounded-full border border-gray bg-white px-6 py-2.5 text-sm font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
+            >
+              Go back and fix something
+            </button>
+            <button
+              type="button"
+              disabled={registering}
+              onClick={() => void registerHousehold()}
+              className="cursor-pointer rounded-full bg-success px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:opacity-90 disabled:opacity-60"
+            >
+              {registering ? "Registering…" : "Everything is right — register them"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <form onSubmit={save} className="space-y-4">
+        {/* ------------------- A. IDENTIFICATION ------------------- */}
+        <Card title="A. Identification">
+          {/*
+            The top of the paper: the form's own number, and which of the two
+            boxes is ticked. Both are printed above section A and both were
+            missing here — the number was generated and never shown, so a
+            clerk holding a numbered sheet had nowhere to put it.
+          */}
+          <div className="mb-5 grid grid-cols-1 gap-x-5 gap-y-4 border-b border-gray pb-5 sm:grid-cols-2">
+            {/*
+              One number. It is the form's number on the paper AND the
+              household's number here — a barangay writes one sheet per
+              house, so two fields asking for it was two chances to
+              disagree.
+
+              Checked before anything else is typed: the paper holds ten
+              lines, and a household of fifteen comes back on a second
+              sheet. That second sheet belongs on the form that already
+              exists, not on a new one that nothing joins to it.
+            */}
+            <div>
+              <p className="mb-1.5 text-sm font-medium text-dark">No.</p>
+              <div className="flex flex-wrap items-start gap-2">
+                <input
+                  value={(form.census_no as string) ?? ""}
+                  onChange={(e) => { set("census_no", e.target.value); setHouseCheck(null); }}
+                 
+                  placeholder={editing ? "" : "Copy the number on the paper form"}
+                  aria-label="Form and household number"
+                  className={`${inputClasses} max-w-xs flex-1`}
+                />
+                <button
+                  type="button"
+                  onClick={verifyHouse}
+                  /*
+                    Nothing to verify once the household is registered.
+                    Verifying asks "is this number free, and who lives
+                    there?" — and this form is the answer to both. The number
+                    itself stays editable: a sheet can be filed under the
+                    wrong one and the correction has to go somewhere.
+                  */
+                  disabled={
+                    status === "Submitted" || checking || !String(form.census_no ?? "").trim()
+                  }
+                  className="cursor-pointer rounded-full bg-primary px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark disabled:opacity-60"
+                >
+                  {checking ? "Checking…" : "Verify"}
+                </button>
+              </div>
+              <p className="mt-1.5 text-xs text-gray-400">
+                {status === "Submitted"
+                  ? "This household is registered, so there is nothing left to check — but the number can still be corrected."
+                  : editing
+                    ? "The number on the paper form, and this household's number."
+                    : "Leave blank and one is issued automatically."}
+              </p>
+            </div>
+
+            <div>
+              <p className="mb-1.5 text-sm font-medium text-dark">This form covers a</p>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { value: false, label: "Household" },
+                  { value: true, label: "Institutional Living Quarters" },
+                ].map((option) => (
+                  <button
+                    key={option.label}
+                    type="button"
+                   
+                    onClick={() => set("is_institutional", option.value)}
+                    aria-pressed={Boolean(form.is_institutional) === option.value}
+                    className={`cursor-pointer rounded-full px-4 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed ${
+                      Boolean(form.is_institutional) === option.value
+                        ? "bg-primary text-white"
+                        : "bg-secondary text-dark hover:bg-primary/10"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-xs leading-relaxed text-gray-400">
+                A dormitory, care home or barracks is counted differently from a family
+                household.
+              </p>
+            </div>
+
+            {houseCheck && !houseCheck.exists && (
+              <p className="rounded-xl bg-success/10 px-4 py-2.5 text-xs leading-relaxed text-dark sm:col-span-2">
+                Nothing carries that number yet — this will be a new household.
+              </p>
+            )}
+
+            {houseCheck?.exists && (
+              <div className="rounded-xl border border-warning/50 bg-warning/5 p-4 sm:col-span-2">
+                {/*
+                  A form already covering this house is the answer, and the
+                  only sensible action is to go and stand in it. Everything
+                  else here is context for deciding whether it really is the
+                  same house.
+                */}
+                {houseCheck.census ? (
+                  <>
+                    <p className="text-sm font-semibold text-dark">
+                      Census {houseCheck.census.census_no} already covers this household
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-gray-600">
+                      {houseCheck.census.members_count} line(s) are on it, headed by{" "}
+                      {houseCheck.census.household_head_name} · {houseCheck.census.status}.
+                      The paper holds ten — add the rest of the household to that form rather
+                      than starting another.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Link
+                        to={`/population/rbim/${houseCheck.census.id}`}
+                        className="rounded-full bg-primary px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-dark"
+                      >
+                        Continue editing {houseCheck.census.census_no} — add the rest there
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => { setHouseCheck(null); set("census_no", ""); }}
+                        className="cursor-pointer rounded-full border border-gray bg-white px-4 py-2 text-xs font-semibold text-gray-500 transition-colors hover:border-primary hover:text-primary"
+                      >
+                        I typed the wrong number
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-semibold text-dark">
+                      Somebody already lives at {houseCheck.household?.household_number}
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-gray-600">
+                      {houseCheck.resident_count} person(s) are recorded there
+                      {houseCheck.household?.street_address &&
+                        ` · ${houseCheck.household.street_address}`}
+                      . No census form covers it yet, so this one will.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={continueHousehold}
+                        className="cursor-pointer rounded-full bg-primary px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-dark"
+                      >
+                        Continue this household — bring their {houseCheck.resident_count} onto
+                        the form
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setHouseCheck(null); set("census_no", ""); }}
+                        className="cursor-pointer rounded-full border border-gray bg-white px-4 py-2 text-xs font-semibold text-gray-500 transition-colors hover:border-primary hover:text-primary"
+                      >
+                        I typed the wrong number
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {(houseCheck.residents?.length ?? 0) > 0 && (
+                  <ul className="mt-3 space-y-0.5 text-xs text-gray-600">
+                    {houseCheck.residents!.slice(0, 12).map((r) => (
+                      <li key={r.id}>
+                        {r.first_name} {r.last_name}{" "}
+                        <span className="text-gray-400">{r.resident_number}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                <p className="mt-3 text-xs leading-relaxed text-gray-500">
+                  If the number really is this one and the people do not match, stop here — the
+                  respondent may have given the wrong number, and that is a question for the next
+                  visit rather than something to decide at a keyboard.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+            {/*
+              Fixed. This is Barangay Natumolan's own register and every
+              form in it is taken here — three boxes a clerk could mistype
+              and nobody would notice, answering a question that has one
+              answer.
+            */}
+            <Text label="Province" value={form.province as string} onChange={() => undefined} readOnly />
+            <Text label="City / Municipality" value={form.city_municipality as string} onChange={() => undefined} readOnly />
+            <Text label="Barangay" value={form.barangay as string} onChange={() => undefined} readOnly />
+            {/*
+              The head is line 1 — that is what Q2 code 01 says — so the
+              name typed here IS the first line of the grid. Written through
+              rather than asked twice.
+            */}
+            <Text
+              label="Household head"
+              required
+              hint="Last Name, First Name M.I. — this fills line 1 below."
+              value={form.household_head_name as string}
+              onChange={(v) => {
+                set("household_head_name", v);
+                fillLineOneFrom(v);
+              }}
+            />
+            <Text label="Respondent" hint="Last Name, First Name M.I." value={form.respondent_name as string} onChange={(v) => set("respondent_name", v)} />
+            {/*
+              Counted, not typed.
+
+              It used to be what the head said, kept beside the grid so the
+              two could be compared. In practice it was a second place to
+              get the same number wrong — so it is the grid now, and the
+              grid is the thing the office actually holds.
+            */}
+            <Text
+              label="Total members"
+              value={filledLines}
+              onChange={() => undefined}
+              readOnly
+              hint="Counted from the lines below."
+            />
+            {/*
+              The head is line 1, so their email is asked there with
+              everybody else's — repeating it here would be a second place
+              to get one address wrong.
+            */}
+            {/*
+              Not on the paper form, and the register cannot do without it:
+              every resident record carries a purok, and submitting this form
+              creates resident records.
+            */}
+            <Choice
+              label="Purok"
+              neededToRegister
+              hint="Not on the paper form — the register needs one."
+              options={PUROKS.map((p) => ({ value: p, label: p }))}
+              value={form.zone_purok as string}
+              onChange={(v) => set("zone_purok", v)}
+            />
+            <Text label="Room / Floor / Unit and Building" value={form.address_unit as string} onChange={(v) => set("address_unit", v)} />
+            <Text label="House / Lot and Block No." value={form.address_house_lot as string} onChange={(v) => set("address_house_lot", v)} />
+            <Text label="Street name" value={form.address_street as string} onChange={(v) => set("address_street", v)} />
+
+          </div>
+        </Card>
+
+        {/* ------------------- THE MEMBER GRID ------------------- */}
+        <Card title="Household members">
+          <p className="mb-4 text-xs leading-relaxed text-gray-500">
+            One card per line on the paper form. The sections fold away because most do not apply
+            to most people — a nine-year-old has no economic activity, and a non-migrant has no
+            migration story.
+          </p>
+
+          {/*
+            Only when there is somebody to add. A panel that says "nobody is
+            missing" is a panel the office reads once and never again.
+          */}
+          {missingFromSheet().length > 0 && (
+            <div className="mb-4 rounded-xl border border-warning/40 bg-warning/5 p-4">
+              <p className="text-sm font-semibold text-dark">
+                {missingFromSheet().length} person(s) on the register for this household
+                are not on this form
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-gray-600">
+                {missingFromSheet()
+                  .map((r) => `${r.first_name} ${r.last_name}`)
+                  .join(", ")}
+                . Adding them here starts their lines from what the register already
+                holds, so the visit only has to fill in what the census asks on top.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (notOnSheet?.household) {
+                    bringOntoForm(notOnSheet.household, missingFromSheet());
+                  }
+                }}
+                className="mt-3 cursor-pointer rounded-full bg-primary px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-dark"
+              >
+                Bring them onto the form
+              </button>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            {members.map((member, index) => (
+              <div key={index} className="rounded-2xl border border-gray bg-secondary/30 p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm font-bold text-dark">
+                    Line {index + 1}
+                    {(member.first_name || member.last_name) && (
+                      <span className="ml-2 font-normal text-gray-600">
+                        {member.first_name} {member.last_name}
+                      </span>
+                    )}
+                  </p>
+                  {/* Line 1 is the head — there is no household without one. */}
+                  {index > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setMembers((p) => p.filter((_, i) => i !== index))}
+                      className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-gray bg-white px-3 py-1 text-xs font-semibold text-gray-500 transition-colors hover:border-danger hover:text-danger"
+                    >
+                      <FiX className="h-3.5 w-3.5" aria-hidden="true" /> Remove
+                    </button>
+                  )}
+                </div>
+
+                <fieldset className="space-y-3">
+                  <Section
+                    title="Q1–Q14 · Demographics"
+                    openByDefault
+                    progress={progressOf([
+                      "last_name", "first_name", "middle_name", "q2_relationship",
+                      "q3_sex", "q4_age", "q5_birth_month", "q5_birth_year",
+                      "q6_birthplace", "q7_nationality",
+                      // Only a non-Filipino is asked which nationality.
+                      String(member.q7_nationality ?? "") === "2" && "q7_nationality_other",
+                      "q8_marital_status", "q9_religion", "q10_ethnicity",
+                      /*
+                        A locked box is not a question this line is being
+                        asked, so it is not counted — in the numerator or the
+                        denominator. Counting them is what left a
+                        twenty-five-year-old stuck at 14/16 with two boxes
+                        nobody could ever fill.
+                      */
+                      inBand(member.q4_age, 5) && "q11_education",
+                      inBand(member.q4_age, 3) && "q12_enrolled",
+                      schoolDetailsApply(member) && "q13_school_level",
+                      schoolDetailsApply(member) && "q14_school_place",
+                    ], member)}
+                  >
+                    {/*
+                      On line 1 these are the head's name, typed once in
+                      Identification. Read-only here rather than hidden, so
+                      the encoder can see what the grid will carry — and
+                      cannot make it say something else.
+                    */}
+                    <Text
+                      label="Q1 Surname"
+                      required
+                      value={member.last_name}
+                      onChange={(v) => setMember(index, "last_name", v)}
+                      readOnly={index === 0}
+                      hint={index === 0 ? "From the household head above." : undefined}
+                    />
+                    <Text
+                      label="Q1 First name"
+                      required
+                      value={member.first_name}
+                      onChange={(v) => setMember(index, "first_name", v)}
+                      readOnly={index === 0}
+                      hint={index === 0 ? "From the household head above." : undefined}
+                    />
+                    {/*
+                      An initial, not a name. The paper will take either, and
+                      the office asks for the initial — so the box holds one
+                      letter and says so, rather than accepting a full middle
+                      name that the register would then carry differently
+                      from every other record.
+
+                      On line 1 it comes from the head's name above, like the
+                      other two. It was the one box of the three left open,
+                      which meant line 1 could be made to disagree with the
+                      name it is supposed to be.
+                    */}
+                    {/*
+                      Typed as a letter, stored as an initial.
+
+                      "L" and "L." are the same answer, and which one the
+                      register ends up holding should not depend on whether
+                      the encoder happened to reach for the full stop. So the
+                      box takes either and keeps one.
+                    */}
+                    <Text
+                      label="Q1 Middle initial"
+                      value={member.middle_name}
+                      maxLength={2}
+                      onChange={(v) => setMember(index, "middle_name", asInitial(v))}
+                      readOnly={index === 0}
+                      hint={index === 0 ? "From the household head above." : "One letter, e.g. L."}
+                    />
+                    <Coded
+                      label="Q2 Relationship to head"
+                      list={m.relationships}
+                      value={member.q2_relationship}
+                      onChange={(v) => setMember(index, "q2_relationship", v)}
+                      lockedTo={index === 0 ? 1 : undefined}
+                      lockedNote="Line 1 is the head — that is what code 01 means."
+                    />
+                    <Coded label="Q3 Sex" neededToRegister list={m.sexes} value={member.q3_sex} onChange={(v) => setMember(index, "q3_sex", v)} />
+                    {/*
+                      Read-only once Q5 is answered, because then it is not a
+                      separate fact: it is this month minus that one. A typed
+                      age is only true on the day it was typed, and a census
+                      form outlives the day it was filled in.
+                    */}
+                    <Text
+                      label="Q4 Age at last birthday"
+                      type="number"
+                      value={
+                        ageFromMonthYear(member.q5_birth_month, member.q5_birth_year) ??
+                        member.q4_age
+                      }
+                      onChange={(v) => setMember(index, "q4_age", v)}
+                      readOnly={
+                        ageFromMonthYear(member.q5_birth_month, member.q5_birth_year) !== null
+                      }
+                      hint={
+                        ageFromMonthYear(member.q5_birth_month, member.q5_birth_year) !== null
+                          ? "Counted from Q5, and it keeps counting."
+                          : "Or answer Q5 and this fills itself."
+                      }
+                    />
+                    <Choice
+                      label="Q5 Birth month"
+                      neededToRegister
+                      options={MONTHS.map((name, i) => ({ value: String(i + 1), label: `${i + 1} · ${name}` }))}
+                      value={member.q5_birth_month}
+                      onChange={(v) => setMember(index, "q5_birth_month", v)}
+                    />
+                    <Choice
+                      label="Q5 Birth year"
+                      neededToRegister
+                      options={BIRTH_YEARS.map((y) => ({ value: String(y), label: String(y) }))}
+                      value={member.q5_birth_year}
+                      onChange={(v) => setMember(index, "q5_birth_year", v)}
+                    />
+                    <Text label="Q6 Place of birth" hint="City/Municipality and Province" value={member.q6_birthplace} onChange={(v) => setMember(index, "q6_birthplace", v)} />
+                    <Coded label="Q7 Nationality" list={m.nationalities} value={member.q7_nationality} onChange={(v) => setMember(index, "q7_nationality", v)} />
+                    {/*
+                      Dead while the answer is Filipino. A country typed
+                      beside "1 · Filipino" contradicts the box next to it,
+                      and one of the two is going to be believed.
+                    */}
+                    <Text
+                      label="Q7 If not Filipino"
+                      placeholder="Which country?"
+                      value={member.q7_nationality_other}
+                      onChange={(v) => setMember(index, "q7_nationality_other", v)}
+                      disabled={String(member.q7_nationality ?? "") !== "2"}
+                      disabledNote="Only for a non-Filipino."
+                    />
+                    <Coded label="Q8 Marital status" list={m.marital_statuses} value={member.q8_marital_status} onChange={(v) => setMember(index, "q8_marital_status", v)} />
+                    <Text label="Q9 Religion" value={member.q9_religion} onChange={(v) => setMember(index, "q9_religion", v)} />
+                    {/*
+                      The examples are printed in the question on the paper,
+                      where the BHW reads them aloud. An encoder working from
+                      a filled sheet never sees that wording, so it is
+                      repeated here.
+                    */}
+                    <Text
+                      label="Q10 Ethnicity"
+                      hint="Tagalog, Bicolano, Bisaya, etc."
+                      value={member.q10_ethnicity}
+                      onChange={(v) => setMember(index, "q10_ethnicity", v)}
+                    />
+                    {/*
+                      Q11 keeps its age band: below five there is no level
+                      completed yet, which is true of every five-year-old
+                      there has ever been. The paper says write 99, so 99 is
+                      what goes in.
+
+                      Q12 keeps only the lower half of its band. Nobody under
+                      three is enrolled anywhere — but plenty of people are
+                      enrolled at forty, and the paper's "25 and above, write
+                      99" would have the form deny it. See schoolDetailsApply.
+                    */}
+                    {/*
+                      Q11 and Q13 look alike and are not.
+
+                      Q11 is what they have finished — fourteen codes, and
+                      the graduate ones are the point of it. Q13 is what they
+                      are sitting in right now, six codes, and only if Q12
+                      says they are enrolled. A college graduate of thirty
+                      taking a vocational course answers 12 to one and 4 to
+                      the other.
+
+                      Both labels say which is which, because "school level"
+                      on its own reads as a repeat of the box above it.
+                    */}
+                    <Coded
+                      label="Q11 Highest level completed"
+                      hint="What they have already finished. 5 and above."
+                      list={m.education_levels}
+                      value={member.q11_education}
+                      onChange={(v) => setMember(index, "q11_education", v)}
+                      skipped={outOfBand(member.q4_age, 5)}
+                      skippedNote="99 — under 5, so there is no level completed."
+                    />
+                    <Coded
+                      label="Q12 Currently enrolled"
+                      hint="3 and above — at any age."
+                      list={m.enrollment}
+                      value={member.q12_enrolled}
+                      onChange={(v) => setMember(index, "q12_enrolled", v)}
+                      skipped={outOfBand(member.q4_age, 3)}
+                      skippedNote="99 — under 3, so there is nothing to be enrolled in."
+                    />
+                    <Coded
+                      label="Q13 Level now attending"
+                      hint="What they are enrolled in now, not what they finished."
+                      list={m.school_levels}
+                      value={member.q13_school_level}
+                      onChange={(v) => setMember(index, "q13_school_level", v)}
+                      skipped={!schoolDetailsApply(member)}
+                      skippedNote={
+                        outOfBand(member.q4_age, 3)
+                          ? "99 — under 3, so there is no schooling to record."
+                          : "99 — Q12 is No, and the paper skips from there to Q15."
+                      }
+                    />
+                    <Text
+                      label="Q14 Place of school"
+                      hint="Only when Q12 is Yes."
+                      value={member.q14_school_place}
+                      onChange={(v) => setMember(index, "q14_school_place", v)}
+                      disabled={!schoolDetailsApply(member)}
+                      disabledNote={
+                        outOfBand(member.q4_age, 3)
+                          ? "Under 3 — nothing to record."
+                          : "Q12 is No, so there is no school to name."
+                      }
+                    />
+                  </Section>
+
+                  {/*
+                    Not on the paper form, and the form cannot do without it.
+
+                    A portal account is issued against an email address and
+                    nothing else, so a household typed in entirely from a
+                    census would come out with nobody able to sign in. Its
+                    own section, and labelled as the system's question rather
+                    than the census's — an encoder comparing screen to paper
+                    should not spend a minute looking for it there.
+                  */}
+                  <Section
+                    title="For the system"
+                    note="not on the paper form"
+                    openByDefault
+                    progress={progressOf(["email", "contact_number"], member)}
+                  >
+                    <EmailField
+                      value={member.email}
+                      onChange={(v) => setMember(index, "email", v)}
+                      censusId={id}
+                      residentId={matches[index]?.id ?? null}
+                      clashLine={clashingLine(index)}
+                     
+                    />
+                    {/*
+                      Not checked for duplicates, deliberately. A household
+                      shares one phone all the time, nothing is issued
+                      against it, and a warning that is usually wrong is a
+                      warning the office learns to click past.
+                    */}
+                    <Text
+                      label="Phone number"
+                      value={member.contact_number}
+                      onChange={(v) => setMember(index, "contact_number", v)}
+                      hint="How the barangay reaches them. It may be shared with the household."
+                    />
+                  </Section>
+
+                  <Section
+                    title="Q15–Q18 · Economic activity"
+                    note="15 and above"
+                    progress={progressOf(
+                      inBand(member.q4_age, 15)
+                        ? ["q15_monthly_income", "q16_income_source",
+                           "q17_work_status", "q18_work_place"]
+                        : [],
+                      member
+                    )}
+                  >
+                    {/*
+                      A census answer about the resident, not barangay money.
+                      The form's own instruction: if none, write 0 — so zero
+                      is an answer and an empty box is not.
+                    */}
+                    <Text
+                      label="Q15 Average monthly income"
+                      type="number"
+                      placeholder="0"
+                      hint="₱ per month. If none, write 0."
+                      value={member.q15_monthly_income}
+                      onChange={(v) => setMember(index, "q15_monthly_income", v)}
+                      disabled={outOfBand(member.q4_age, 15)}
+                      disabledNote="99 — under 15, so this is not asked."
+                    />
+                    <Coded label="Q16 Source of income" list={m.income_sources} value={member.q16_income_source} onChange={(v) => setMember(index, "q16_income_source", v)} />
+                    <Coded label="Q17 Status of work / business" list={m.work_statuses} value={member.q17_work_status} onChange={(v) => setMember(index, "q17_work_status", v)} />
+                    <Text label="Q18 Place of work" hint="Barangay and city/municipality" value={member.q18_work_place} onChange={(v) => setMember(index, "q18_work_place", v)} />
+                  </Section>
+
+                  <Section
+                    title="Q19–Q21 · Infant health"
+                    note="0 to 11 months"
+                    progress={progressOf(
+                      // Under one year old: an age in whole years of 0.
+                      inBand(member.q4_age, 0, 0)
+                        ? [
+                            "q19_delivery_place",
+                            isOther(member.q19_delivery_place, m.delivery_places) && "q19_other",
+                            "q20_birth_attendant",
+                            isOther(member.q20_birth_attendant, m.birth_attendants) && "q20_other",
+                            "q21_immunization",
+                          ]
+                        : [],
+                      member
+                    )}
+                  >
+                    <Coded label="Q19 Place of delivery" list={m.delivery_places} value={member.q19_delivery_place} onChange={(v) => setMember(index, "q19_delivery_place", v)} />
+                    <Text
+                      label="Q19 If others, specify"
+                      value={member.q19_other}
+                      onChange={(v) => setMember(index, "q19_other", v)}
+                      disabled={!isOther(member.q19_delivery_place, m.delivery_places)}
+                      disabledNote="Only when the place is not on the list."
+                    />
+                    <Coded label="Q20 Birth attendant" list={m.birth_attendants} value={member.q20_birth_attendant} onChange={(v) => setMember(index, "q20_birth_attendant", v)} />
+                    <Text
+                      label="Q20 If others, specify"
+                      value={member.q20_other}
+                      onChange={(v) => setMember(index, "q20_other", v)}
+                      disabled={!isOther(member.q20_birth_attendant, m.birth_attendants)}
+                      disabledNote="Only when the attendant is not on the list."
+                    />
+                    <Text label="Q21 Last vaccine received" hint="From the baby book or immunisation card." value={member.q21_immunization} onChange={(v) => setMember(index, "q21_immunization", v)} />
+                  </Section>
+
+                  <Section
+                    title="Q22–Q25 · Family planning"
+                    note="women 10 to 54"
+                    progress={progressOf(
+                      inBand(member.q4_age, 10, 54) && maybeWoman(member, m.sexes)
+                        ? [
+                            "q22_pregnancies", "q22_living_children", "q23_fp_method",
+                            "q24_fp_source",
+                            isOther(member.q24_fp_source, m.fp_sources) && "q24_other",
+                            "q25_fp_intention", "q25_detail",
+                          ]
+                        : [],
+                      member
+                    )}
+                  >
+                    <Text label="Q22 Pregnancies" type="number" value={member.q22_pregnancies} onChange={(v) => setMember(index, "q22_pregnancies", v)} />
+                    <Text label="Q22 Children still living" type="number" value={member.q22_living_children} onChange={(v) => setMember(index, "q22_living_children", v)} />
+                    <Coded label="Q23 FP method in use" list={m.fp_methods} value={member.q23_fp_method} onChange={(v) => setMember(index, "q23_fp_method", v)} />
+                    <Coded label="Q24 Where obtained" list={m.fp_sources} value={member.q24_fp_source} onChange={(v) => setMember(index, "q24_fp_source", v)} />
+                    <Text
+                      label="Q24 If another source, specify"
+                      value={member.q24_other}
+                      onChange={(v) => setMember(index, "q24_other", v)}
+                      disabled={!isOther(member.q24_fp_source, m.fp_sources)}
+                      disabledNote="Only when the source is not on the list."
+                    />
+                    <Coded label="Q25 Intend to use FP" list={m.yes_no} value={member.q25_fp_intention} onChange={(v) => setMember(index, "q25_fp_intention", v)} />
+                    <Text label="Q25 Which method, or why not" value={member.q25_detail} onChange={(v) => setMember(index, "q25_detail", v)} />
+                  </Section>
+
+                  <Section
+                    title="Q26–Q29 · Health"
+                    note="all members"
+                    progress={progressOf([
+                      "q26_health_insurance",
+                      isOther(member.q26_health_insurance, m.health_insurance) && "q26_other",
+                      "q27_facility_visited",
+                      isOther(member.q27_facility_visited, m.facilities) && "q27_other",
+                      "q28_visit_reason",
+                      isOther(member.q28_visit_reason, m.visit_reasons) && "q28_other",
+                      "q29_disability",
+                    ], member)}
+                  >
+                    <Coded label="Q26 Health insurance" list={m.health_insurance} value={member.q26_health_insurance} onChange={(v) => setMember(index, "q26_health_insurance", v)} />
+                    <Text
+                      label="Q26 If others, specify"
+                      value={member.q26_other}
+                      onChange={(v) => setMember(index, "q26_other", v)}
+                      disabled={!isOther(member.q26_health_insurance, m.health_insurance)}
+                      disabledNote="Only when the insurer is not on the list."
+                    />
+                    <Coded label="Q27 Facility visited (12 months)" list={m.facilities} value={member.q27_facility_visited} onChange={(v) => setMember(index, "q27_facility_visited", v)} />
+                    <Text
+                      label="Q27 If another facility, specify"
+                      value={member.q27_other}
+                      onChange={(v) => setMember(index, "q27_other", v)}
+                      disabled={!isOther(member.q27_facility_visited, m.facilities)}
+                      disabledNote="Only when the facility is not on the list."
+                    />
+                    <Coded label="Q28 Reason for the visit" list={m.visit_reasons} value={member.q28_visit_reason} onChange={(v) => setMember(index, "q28_visit_reason", v)} />
+                    <Text
+                      label="Q28 If another reason, specify"
+                      value={member.q28_other}
+                      onChange={(v) => setMember(index, "q28_other", v)}
+                      disabled={!isOther(member.q28_visit_reason, m.visit_reasons)}
+                      disabledNote="Only when the reason is not on the list."
+                    />
+                    <Coded label="Q29 Disability" list={m.disabilities} value={member.q29_disability} onChange={(v) => setMember(index, "q29_disability", v)} />
+                  </Section>
+
+                  <Section
+                    title="Q30–Q32 · Socio-civic participation"
+                    /*
+                      Three questions with three different age bands, so this
+                      one is counted question by question rather than as a
+                      block.
+                    */
+                    progress={progressOf([
+                      inBand(member.q4_age, 10) && "q30_solo_parent",
+                      inBand(member.q4_age, 60) && "q31_senior_registered",
+                      inBand(member.q4_age, 15) && "q32_voter_barangay",
+                    ], member)}
+                  >
+                    <Coded label="Q30 Solo parent" hint="10 and above" list={m.solo_parent} value={member.q30_solo_parent} onChange={(v) => setMember(index, "q30_solo_parent", v)} />
+                    <Coded label="Q31 Registered senior citizen" hint="60 and above" list={m.yes_no} value={member.q31_senior_registered} onChange={(v) => setMember(index, "q31_senior_registered", v)} />
+                    <Text label="Q32 Registered voter in" hint="15 and above — the barangay they are registered in." value={member.q32_voter_barangay} onChange={(v) => setMember(index, "q32_voter_barangay", v)} />
+                  </Section>
+
+                  <Section
+                    title="Q33–Q41 · Migration"
+                    note="5 and above"
+                    progress={progressOf(
+                      inBand(member.q4_age, 5)
+                        ? [
+                            "q33_residence_5yrs", "q34_residence_6mos",
+                            "q35_stay_years", "q35_stay_months", "q36_resident_type",
+                            "q37_transfer_month", "q37_transfer_year",
+                            "q38a_leave_reason", "q38b_leave_reason", "q38c_leave_reason",
+                            (isOther(member.q38a_leave_reason, m.leave_reasons) ||
+                              isOther(member.q38b_leave_reason, m.leave_reasons) ||
+                              isOther(member.q38c_leave_reason, m.leave_reasons)) && "q38_other",
+                            "q39_will_return", "q39_when",
+                            "q40a_transfer_reason", "q40b_transfer_reason",
+                            "q40c_transfer_reason", "q40_other",
+                            "q41_intends_to_stay", "q41_until",
+                          ]
+                        : [],
+                      member
+                    )}
+                  >
+                    <Text label="Q33 Residence 5 years ago" value={member.q33_residence_5yrs} onChange={(v) => setMember(index, "q33_residence_5yrs", v)} />
+                    <Text label="Q34 Residence 6 months ago" value={member.q34_residence_6mos} onChange={(v) => setMember(index, "q34_residence_6mos", v)} />
+                    {/*
+                      The paper heads this pair "LENGTH OF STAY IN THE
+                      BARANGAY". "…and months" on its own said nothing —
+                      months of what, next to a box that had scrolled out of
+                      sight — so each box carries the question.
+                    */}
+                    <Text
+                      label="Q35 Length of stay — years"
+                      hint="How long they have lived in this barangay."
+                      type="number"
+                      value={member.q35_stay_years}
+                      onChange={(v) => setMember(index, "q35_stay_years", v)}
+                    />
+                    <Text
+                      label="Q35 Length of stay — months"
+                      hint="The part-year on top of the years above. 0 to 11."
+                      type="number"
+                      value={member.q35_stay_months}
+                      onChange={(v) => setMember(index, "q35_stay_months", v)}
+                    />
+                    <Coded label="Q36 Type of resident" hint="Worked out from Q33–Q35, not asked." list={m.resident_types} value={member.q36_resident_type} onChange={(v) => setMember(index, "q36_resident_type", v)} />
+                    <Text label="Q37 Transfer month" type="number" value={member.q37_transfer_month} onChange={(v) => setMember(index, "q37_transfer_month", v)} />
+                    <Text label="Q37 Transfer year" type="number" value={member.q37_transfer_year} onChange={(v) => setMember(index, "q37_transfer_year", v)} />
+                    <Coded label="Q38A Reason for leaving" list={m.leave_reasons} value={member.q38a_leave_reason} onChange={(v) => setMember(index, "q38a_leave_reason", v)} />
+                    <Coded label="Q38B Reason for leaving" list={m.leave_reasons} value={member.q38b_leave_reason} onChange={(v) => setMember(index, "q38b_leave_reason", v)} />
+                    <Coded label="Q38C Reason for leaving" list={m.leave_reasons} value={member.q38c_leave_reason} onChange={(v) => setMember(index, "q38c_leave_reason", v)} />
+                    <Text
+                      label="Q38 If another reason, specify"
+                      value={member.q38_other}
+                      onChange={(v) => setMember(index, "q38_other", v)}
+                      disabled={
+                        !isOther(member.q38a_leave_reason, m.leave_reasons) &&
+                        !isOther(member.q38b_leave_reason, m.leave_reasons) &&
+                        !isOther(member.q38c_leave_reason, m.leave_reasons)
+                      }
+                      disabledNote="Only when one of Q38A–C is Others."
+                    />
+                    <Coded label="Q39 Will return" list={m.yes_no} value={member.q39_will_return} onChange={(v) => setMember(index, "q39_will_return", v)} />
+                    <Text label="Q39 When" value={member.q39_when} onChange={(v) => setMember(index, "q39_when", v)} />
+                    <Coded label="Q40A Reason for transferring here" list={m.transfer_reasons} value={member.q40a_transfer_reason} onChange={(v) => setMember(index, "q40a_transfer_reason", v)} />
+                    <Coded label="Q40B Reason for transferring here" list={m.transfer_reasons} value={member.q40b_transfer_reason} onChange={(v) => setMember(index, "q40b_transfer_reason", v)} />
+                    <Coded label="Q40C Reason for transferring here" list={m.transfer_reasons} value={member.q40c_transfer_reason} onChange={(v) => setMember(index, "q40c_transfer_reason", v)} />
+                    {/*
+                      Q40 has no "Others" code on the paper — the note says
+                      "if other reason/s, write the response", so the box is
+                      always open.
+                    */}
+                    <Text label="Q40 Any other reason" value={member.q40_other} onChange={(v) => setMember(index, "q40_other", v)} />
+                    <Coded label="Q41 Intends to stay" list={m.yes_no} value={member.q41_intends_to_stay} onChange={(v) => setMember(index, "q41_intends_to_stay", v)} />
+                    <Text label="Q41 Until when" value={member.q41_until} onChange={(v) => setMember(index, "q41_until", v)} />
+                  </Section>
+
+                  <Section
+                    title="Q42–Q44 · Community tax & skills"
+                    progress={progressOf([
+                      inBand(member.q4_age, 18) && "q42a_has_ctc",
+                      inBand(member.q4_age, 18) && "q42b_ctc_here",
+                      inBand(member.q4_age, 15) && "q43_training_interest",
+                      "q44_skill",
+                      isOther(member.q44_skill, m.skills) && "q44_other",
+                    ], member)}
+                  >
+                    <Coded label="Q42A Has a valid CTC" hint="18 and above" list={m.yes_no} value={member.q42a_has_ctc} onChange={(v) => setMember(index, "q42a_has_ctc", v)} />
+                    <Coded label="Q42B Issued in this barangay" list={m.yes_no} value={member.q42b_ctc_here} onChange={(v) => setMember(index, "q42b_ctc_here", v)} />
+                    <Coded label="Q43 Training interested in" hint="15 and above" list={m.trainings} value={member.q43_training_interest} onChange={(v) => setMember(index, "q43_training_interest", v)} />
+                    <Coded label="Q44 Most prominent skill" list={m.skills} value={member.q44_skill} onChange={(v) => setMember(index, "q44_skill", v)} />
+                    <Text
+                      label="Q44 If others, specify"
+                      value={member.q44_other}
+                      onChange={(v) => setMember(index, "q44_other", v)}
+                      disabled={!isOther(member.q44_skill, m.skills)}
+                      disabledNote="Only when the skill is not on the list."
+                    />
+                  </Section>
+                </fieldset>
+
+                {/*
+                  Whether this line becomes a resident record when the form is
+                  submitted.
+
+                  Line 1 has no switch: it is the household head, and there is
+                  no household without one. The rest are on by default and can
+                  be turned off, because a census records who was in the house
+                  that evening — a visiting cousin from the next barangay
+                  belongs on the sheet without belonging on this register.
+                */}
+                {(member.first_name || member.last_name) && (
+                  <div className="mt-3 rounded-xl border border-primary/30 bg-primary/5 p-3">
+                    {index === 0 ? (
+                      <p className="flex items-center gap-2 text-xs font-semibold text-primary">
+                        <FiCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+                        Registered as a resident — the household head always is.
+                      </p>
+                    ) : (
+                      <label className="flex cursor-pointer items-start gap-2">
+                        <input
+                          type="checkbox"
+                          // Absent means yes: a line the office has not
+                          // touched is one they mean to register.
+                          checked={Number(member.register_as_resident ?? 1) === 1}
+                          onChange={(e) =>
+                            setMemberFlag(index, "register_as_resident", e.target.checked)
+                          }
+                          className="mt-0.5 h-4 w-4 cursor-pointer accent-[var(--color-primary)]"
+                        />
+                        <span>
+                          <span className="block text-xs font-semibold text-dark">
+                            Register as a resident
+                          </span>
+                          <span className="block text-xs text-gray-500">
+                            Submitting the form puts them on the barangay register. Turn this
+                            off for somebody who was in the house but lives elsewhere.
+                          </span>
+                        </span>
+                      </label>
+                    )}
+
+                    {matches[index] && (
+                      <p className="mt-2 text-xs text-gray-500">
+                        On the register as{" "}
+                        <Link
+                          to={`/residents/${matches[index]!.id}`}
+                          className="font-semibold text-primary hover:underline"
+                        >
+                          {matches[index]!.resident_number}
+                        </Link>
+                        .
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {(
+            <button
+              type="button"
+              onClick={() => setMembers((p) => [...p, { ...BLANK_MEMBER }])}
+              className="mt-4 flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray py-3 text-sm font-semibold text-primary transition-colors hover:border-primary hover:bg-primary/5"
+            >
+              <FiPlus className="h-4 w-4" aria-hidden="true" /> Add another household member
+            </button>
+          )}
+        </Card>
+
+        {/* ------------------- H. HOUSEHOLD QUESTIONS ------------------- */}
+        <Card title="H. Questions for the household">
+          <fieldset>
+            <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+              <Coded label="Q45 Housing unit" list={h.tenures} value={form.q45_housing_tenure as number} onChange={(v) => set("q45_housing_tenure", v)} />
+              <Coded label="Q46 Lot" list={h.tenures} value={form.q46_lot_tenure as number} onChange={(v) => set("q46_lot_tenure", v)} />
+              <Coded label="Q47 Fuel for lighting" list={h.lighting_fuels} value={form.q47_lighting_fuel as number} onChange={(v) => set("q47_lighting_fuel", v)} />
+              <Text
+                label="Q47 If others, specify"
+                value={form.q47_other as string}
+                onChange={(v) => set("q47_other", v)}
+                disabled={!isOther(form.q47_lighting_fuel, h.lighting_fuels)}
+                disabledNote="Only when the fuel is not on the list."
+              />
+              <Coded label="Q48 Fuel for cooking" list={h.cooking_fuels} value={form.q48_cooking_fuel as number} onChange={(v) => set("q48_cooking_fuel", v)} />
+              <Text
+                label="Q48 If others, specify"
+                value={form.q48_other as string}
+                onChange={(v) => set("q48_other", v)}
+                disabled={!isOther(form.q48_cooking_fuel, h.cooking_fuels)}
+                disabledNote="Only when the fuel is not on the list."
+              />
+              <Coded label="Q49 Drinking water" list={h.water_sources} value={form.q49_water_source as number} onChange={(v) => set("q49_water_source", v)} />
+              <Text
+                label="Q49 If others, specify"
+                value={form.q49_other as string}
+                onChange={(v) => set("q49_other", v)}
+                disabled={!isOther(form.q49_water_source, h.water_sources)}
+                disabledNote="Only when the source is not on the list."
+              />
+              <Coded label="Q50a Kitchen garbage" list={h.garbage_disposal} value={form.q50a_garbage_disposal as number} onChange={(v) => set("q50a_garbage_disposal", v)} />
+              <Coded label="Q50b Segregates garbage" list={h.yes_no} value={form.q50b_segregates as number} onChange={(v) => set("q50b_segregates", v)} />
+              <Coded label="Q51 Toilet facility" list={h.toilets} value={form.q51_toilet as number} onChange={(v) => set("q51_toilet", v)} />
+              <Text
+                label="Q51 If others, specify"
+                value={form.q51_other as string}
+                onChange={(v) => set("q51_other", v)}
+                disabled={!isOther(form.q51_toilet, h.toilets)}
+                disabledNote="Only when the facility is not on the list."
+              />
+              <Coded label="Q52 Type of building" hint="Observed, not asked." list={h.building_types} value={form.q52_building_type as number} onChange={(v) => set("q52_building_type", v)} />
+              <Coded label="Q53 Outer wall material" hint="Observed, not asked." list={h.outer_walls} value={form.q53_outer_wall as number} onChange={(v) => set("q53_outer_wall", v)} />
+              <Text
+                label="Q53 If others, specify"
+                value={form.q53_other as string}
+                onChange={(v) => set("q53_other", v)}
+                disabled={!isOther(form.q53_outer_wall, h.outer_walls)}
+                disabledNote="Only when the material is not on the list."
+              />
+
+              <Text label="Q54 Female death — age" type="number" hint="In the past 12 months." value={form.q54_female_death_age as number} onChange={(v) => set("q54_female_death_age", v)} />
+              <Text label="Q54 Cause of death" value={form.q54_female_death_cause as string} onChange={(v) => set("q54_female_death_cause", v)} />
+              <Text label="Q55 Child under 5 — age" type="number" value={form.q55_child_death_age as number} onChange={(v) => set("q55_child_death_age", v)} />
+              <Coded label="Q55 Sex" list={m.sexes} value={form.q55_child_death_sex as number} onChange={(v) => set("q55_child_death_sex", v)} />
+              <Text label="Q55 Cause of death" value={form.q55_child_death_cause as string} onChange={(v) => set("q55_child_death_cause", v)} />
+
+              <Text label="Q56 Common disease 1" value={form.q56_common_disease_1 as string} onChange={(v) => set("q56_common_disease_1", v)} />
+              <Text label="Q56 Common disease 2" value={form.q56_common_disease_2 as string} onChange={(v) => set("q56_common_disease_2", v)} />
+              <Text label="Q56 Common disease 3" value={form.q56_common_disease_3 as string} onChange={(v) => set("q56_common_disease_3", v)} />
+              <Text label="Q57 Primary need 1" value={form.q57_primary_need_1 as string} onChange={(v) => set("q57_primary_need_1", v)} />
+              <Text label="Q57 Primary need 2" value={form.q57_primary_need_2 as string} onChange={(v) => set("q57_primary_need_2", v)} />
+              <Text label="Q57 Primary need 3" value={form.q57_primary_need_3 as string} onChange={(v) => set("q57_primary_need_3", v)} />
+              <Text label="Q58 In 5 years — barangay" value={form.q58_intend_barangay as string} onChange={(v) => set("q58_intend_barangay", v)} />
+              <Text label="Q58 Municipality" value={form.q58_intend_municipality as string} onChange={(v) => set("q58_intend_municipality", v)} />
+              <Text label="Q58 Province" value={form.q58_intend_province as string} onChange={(v) => set("q58_intend_province", v)} />
+            </div>
+          </fieldset>
+        </Card>
+
+        {/* ------------------- CONSENT + ENCODING ------------------- */}
+        <Card title="Consent and encoding">
+          <fieldset>
+            <div className="mb-4 rounded-xl border border-warning/40 bg-warning/5 p-4">
+              <label className="inline-flex cursor-pointer items-start gap-2 text-sm text-dark">
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.consent_given)}
+                  onChange={(e) => set("consent_given", e.target.checked)}
+                  className="mt-0.5 h-4 w-4 cursor-pointer accent-primary"
+                />
+                <span>
+                  The respondent gave consent to be interviewed and to the use of their data.
+                  <span className="mt-1 block text-xs leading-relaxed text-gray-600">
+                    The paper form carries a signature block, and the census may not be used
+                    without it. A form cannot be submitted until this is recorded.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+              <Text label="Name on the consent" value={form.consent_name as string} onChange={(v) => set("consent_name", v)} />
+              <Text label="Date encoded" type="date" value={(form.date_encoded as string)?.slice(0, 10)} onChange={(v) => set("date_encoded", v)} />
+              <Text label="Encoder" value={form.encoder_name as string} onChange={(v) => set("encoder_name", v)} />
+              <Text label="Supervisor" value={form.supervisor_name as string} onChange={(v) => set("supervisor_name", v)} />
+            </div>
+          </fieldset>
+        </Card>
+
+        {/* ------------------- ACTIONS ------------------- */}
+        {/*
+          Two, because there are two things the office does: keep typing, and
+          register the household. There is no third — no hand-over, because
+          the hand-over was the BHW carrying paper through the door, and no
+          separate review, because the office typing the sheet IS the review.
+        */}
+        <div className="flex flex-wrap justify-end gap-2">
+          <button
+            type="submit"
+            disabled={saving}
+            className="cursor-pointer rounded-full border border-gray bg-white px-8 py-3 text-sm font-semibold text-dark transition-colors hover:border-primary hover:text-primary disabled:opacity-60"
+          >
+            {saving ? "Saving…" : editing ? "Save changes" : "Save as draft"}
+          </button>
+
+          {editing && (
+            <button
+              type="button"
+              onClick={submitForm}
+              className="cursor-pointer rounded-full bg-success px-8 py-3 text-sm font-semibold text-white transition-colors hover:opacity-90"
+            >
+              {status === "Draft" ? "Submit — register this household" : "Submit again"}
+            </button>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+}

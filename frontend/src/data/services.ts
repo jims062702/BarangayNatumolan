@@ -79,7 +79,7 @@ export const services: Service[] = [
     id: 9,
     name: "Other Barangay Services",
     description:
-      "Health services, day care enrollment, community programs, and more assistance for residents.",
+      "Health services, youth programs, community activities, and more assistance for residents.",
     icon: FaConciergeBell,
   },
 ];

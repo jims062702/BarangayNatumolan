@@ -1,19 +1,25 @@
 import { useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { FiMenu, FiX, FiUser } from "react-icons/fi";
+import { FiMenu, FiX } from "react-icons/fi";
 import useScrollPosition from "../../hooks/useScrollPosition";
 import useActiveSection from "../../hooks/useActiveSection";
+import AccountMenu from "./AccountMenu";
+import { scrollToLandingSection } from "../../lib/landingSection";
 import { navLinks, sectionIds } from "../../data/navLinks";
 import logo from "../../assets/logo/logo.svg";
 
 export default function Navbar() {
   const scrollY = useScrollPosition();
-  const active = useActiveSection(sectionIds);
+  const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   // Only the landing page has the dark hero behind the navbar; on every
   // other page (e.g. /news/…) the bar must be solid or the text is invisible.
-  const onLanding = useLocation().pathname === "/";
+  const pathname = useLocation().pathname;
+  const onLanding = pathname === "/";
+  // Keyed on the route: this layout never remounts, so without it the section
+  // observer would keep watching the (absent) sections of the previous page.
+  const active = useActiveSection(sectionIds, pathname);
 
   // Transparent over the hero; solid glass when scrolled, off the landing
   // page, or when the mobile menu is open.
@@ -23,6 +29,26 @@ export default function Navbar() {
   // Section anchors only exist on the landing page — elsewhere, link back
   // to the landing page with the fragment.
   const sectionHref = (id: string) => (onLanding ? `#${id}` : `/#${id}`);
+
+  /**
+   * Scroll to a section ourselves instead of leaving it to the browser's
+   * fragment navigation, which lands on Home in both directions — see
+   * `scrollToLandingSection` for the two reasons why.
+   */
+  const goToSection = (event: React.MouseEvent<HTMLAnchorElement>, id: string) => {
+    event.preventDefault();
+    closeMenu();
+
+    if (onLanding) {
+      scrollToLandingSection(id);
+      return;
+    }
+
+    // Coming from another route: switch to the landing page first, then scroll
+    // once the section has actually rendered.
+    navigate("/");
+    scrollToLandingSection(id);
+  };
 
   return (
     <motion.header
@@ -40,7 +66,11 @@ export default function Navbar() {
         className="mx-auto flex h-18 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8"
       >
         {/* Brand */}
-        <a href={sectionHref("home")} onClick={closeMenu} className="flex items-center gap-3">
+        <a
+          href={sectionHref("home")}
+          onClick={(e) => goToSection(e, "home")}
+          className="flex items-center gap-3"
+        >
           <img src={logo} alt="Barangay Natumolan logo" className="h-11 w-11" />
           <span className="leading-tight">
             <span
@@ -68,6 +98,7 @@ export default function Navbar() {
               <li key={link.id}>
                 <a
                   href={sectionHref(link.id)}
+                  onClick={(e) => goToSection(e, link.id)}
                   aria-current={isActive ? "true" : undefined}
                   className={`group relative py-2 text-sm font-medium transition-colors duration-300 ${
                     solid
@@ -91,33 +122,13 @@ export default function Navbar() {
             );
           })}
           <li>
-            <Link
-              to="/login"
-              aria-label="Login to the Barangay MIS"
-              title="Login"
-              className={`flex h-10 w-10 cursor-pointer items-center justify-center rounded-full transition-colors duration-300 ${
-                solid
-                  ? "bg-primary/10 text-primary hover:bg-primary hover:text-white"
-                  : "bg-white/15 text-white hover:bg-white hover:text-primary"
-              }`}
-            >
-              <FiUser className="h-5 w-5" />
-            </Link>
+            <AccountMenu solid={solid} />
           </li>
         </ul>
 
         {/* Mobile controls */}
         <div className="flex items-center gap-2 lg:hidden">
-          <Link
-            to="/login"
-            aria-label="Login to the Barangay MIS"
-            title="Login"
-            className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors duration-300 ${
-              solid ? "bg-primary/10 text-primary" : "bg-white/15 text-white"
-            }`}
-          >
-            <FiUser className="h-5 w-5" />
-          </Link>
+          <AccountMenu solid={solid} />
           <button
             type="button"
             aria-label={menuOpen ? "Close menu" : "Open menu"}
@@ -147,7 +158,7 @@ export default function Navbar() {
                 <li key={link.id}>
                   <a
                     href={sectionHref(link.id)}
-                    onClick={closeMenu}
+                    onClick={(e) => goToSection(e, link.id)}
                     className={`block rounded-lg px-4 py-3 text-sm font-medium transition-colors ${
                       active === link.id
                         ? "bg-primary/10 text-primary"

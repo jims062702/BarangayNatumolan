@@ -49,7 +49,7 @@ export const news: NewsItem[] = [
     title: "SK Youth Leadership Summit",
     date: "September 26, 2026",
     time: "8:00 AM – 5:00 PM",
-    location: "Child Development Center Hall",
+    location: "Barangay Natumolan Multi-Purpose Hall",
     description:
       "The Sangguniang Kabataan invites all youth aged 15–30 to a whole-day summit on leadership, civic engagement, and community projects. Free registration, meals, and certificates await participants. Slots are limited — register at the SK Office.",
     image: news4,

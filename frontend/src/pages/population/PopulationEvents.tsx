@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -26,7 +27,6 @@ export default function PopulationEvents() {
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState("");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [resident, setResident] = useState<Resident | null>(null);
@@ -56,7 +56,6 @@ export default function PopulationEvents() {
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!(await confirmAction({ title: "Record this population event?", confirmText: "Yes, record" }))) return;
-    setFeedback("");
     try {
       await api.post("/population/events", {
         event_type: eventType,
@@ -67,10 +66,10 @@ export default function PopulationEvents() {
       setCreateOpen(false);
       setDescription("");
       setResident(null);
-      setFeedback("Event recorded, pending verification.");
+      toast("Event recorded, pending verification.");
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
@@ -83,13 +82,12 @@ export default function PopulationEvents() {
       }))
     )
       return;
-    setFeedback("");
     try {
       await api.put(`/population/events/${row.id}/verify`, { verification_status: status });
-      setFeedback(`Event marked ${status}.`);
+      toast(`Event marked ${status}.`);
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
@@ -114,10 +112,6 @@ export default function PopulationEvents() {
         issue official birth, marriage, or death certificates, which remain
         under the civil registry.
       </div>
-
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
 
       <Card>
         <DataTable
@@ -182,7 +176,7 @@ export default function PopulationEvents() {
               ))}
             </select>
           </FormField>
-          <FormField label="Related resident">
+          <FormField label="Related resident" plain>
             <ResidentPicker value={resident} onChange={setResident} />
           </FormField>
           <FormField label="Event date" required>

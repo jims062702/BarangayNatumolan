@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { FiArrowLeft, FiEye, FiEyeOff } from "react-icons/fi";
+import { FiArrowLeft, FiEye, FiEyeOff, FiMail } from "react-icons/fi";
 import { useAuth, homePathFor } from "../../contexts/AuthContext";
-import { errorMessage } from "../../lib/api";
+import { api, errorMessage } from "../../lib/api";
 import { inputClasses } from "../../components/UI/FormField";
 import logo from "../../assets/logo/logo.svg";
 import sideImage from "../../assets/images/hero-1.svg";
@@ -12,23 +12,81 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  /*
+   * Set once the password has been accepted but the account has never been
+   * activated. The password is kept in state because the activation call
+   * re-presents it — a code on its own must never be enough to get in.
+   */
+  const [activation, setActivation] = useState<{ email: string } | null>(null);
+  const [code, setCode] = useState("");
+  const { login, activate } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError("");
+    setNotice("");
     setLoading(true);
 
     try {
-      const user = await login(email, password);
+      const result = await login(email, password);
+
+      if (result.kind === "needs-activation") {
+        setActivation({ email: result.email });
+        setCode("");
+        setNotice(
+          result.otpSent
+            ? result.message
+            : "We could not send the email just now. Press “Send another code” in a moment, or ask the Barangay Population Office for help."
+        );
+        return;
+      }
+
+      navigate(homePathFor(result.user));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitCode = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    setLoading(true);
+    try {
+      const user = await activate(email, password, code.trim());
       navigate(homePathFor(user));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
+  };
+
+  const resend = async () => {
+    setError("");
+    setNotice("");
+    setLoading(true);
+    try {
+      const response = await api.post("/auth/resend-activation", { email, password });
+      setNotice(response.data.message);
+      setCode("");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const cancelActivation = () => {
+    setActivation(null);
+    setCode("");
+    setError("");
+    setNotice("");
   };
 
   return (
@@ -93,9 +151,13 @@ export default function LoginPage() {
           </div>
 
           <div className="hidden lg:block">
-            <h2 className="text-3xl font-bold text-dark">Welcome back</h2>
+            <h2 className="text-3xl font-bold text-dark">
+              {activation ? "Verify your email" : "Welcome back"}
+            </h2>
             <p className="mt-2 text-sm text-gray-500">
-              Sign in to your staff or resident account.
+              {activation
+                ? "One last step before your account is yours."
+                : "Sign in to your staff or resident account."}
             </p>
           </div>
 
@@ -107,61 +169,132 @@ export default function LoginPage() {
               {error}
             </div>
           )}
+          {notice && (
+            <div
+              role="status"
+              className="mt-6 rounded-xl border border-primary/20 bg-primary/10 px-4 py-3 text-sm font-medium text-dark"
+            >
+              {notice}
+            </div>
+          )}
 
-          <form onSubmit={handleSubmit} className="mt-6 space-y-5">
-            <label className="block">
-              <span className="mb-1.5 block text-sm font-medium text-dark">Email</span>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className={inputClasses}
-                placeholder="you@natumolan.local"
-                autoComplete="email"
-                required
-              />
-            </label>
+          {activation ? (
+            /*
+             * Activation. The account already exists — it was created when the
+             * Population Office registered this resident — so this is not a
+             * sign-up: it is proving the mailbox on their record is theirs.
+             */
+            <form onSubmit={submitCode} className="mt-6 space-y-5">
+              <div className="flex items-start gap-3 rounded-2xl border border-gray bg-secondary/60 px-4 py-3 text-sm leading-relaxed text-gray-600">
+                <FiMail aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+                <span>
+                  We emailed a 6-digit code to{" "}
+                  <strong className="text-dark">{activation.email}</strong>. Enter it below to
+                  activate your portal account.
+                </span>
+              </div>
 
-            <label className="block">
-              <span className="mb-1.5 block text-sm font-medium text-dark">Password</span>
-              <div className="relative">
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-dark">Verification code</span>
                 <input
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className={`${inputClasses} pr-12`}
-                  placeholder="••••••••"
-                  autoComplete="current-password"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  className={`${inputClasses} text-center font-mono text-2xl tracking-[0.5em]`}
+                  placeholder="000000"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
                   required
                 />
+              </label>
+
+              <button
+                type="submit"
+                disabled={loading || code.length < 6}
+                className="w-full cursor-pointer rounded-full bg-primary py-3 text-sm font-semibold text-white shadow-lg shadow-primary/30 transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loading ? "Verifying…" : "Activate my account"}
+              </button>
+
+              <div className="flex items-center justify-between text-xs">
                 <button
                   type="button"
-                  onClick={() => setShowPassword((s) => !s)}
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                  title={showPassword ? "Hide password" : "Show password"}
-                  className="absolute right-1.5 top-1/2 flex h-9 w-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-primary/10 hover:text-primary"
+                  onClick={resend}
+                  disabled={loading}
+                  className="cursor-pointer font-semibold text-primary hover:underline disabled:opacity-60"
                 >
-                  {showPassword ? <FiEyeOff className="h-5 w-5" /> : <FiEye className="h-5 w-5" />}
+                  Send another code
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelActivation}
+                  className="cursor-pointer font-medium text-gray-500 hover:text-dark"
+                >
+                  Use a different account
                 </button>
               </div>
-            </label>
+            </form>
+          ) : (
+            <form onSubmit={handleSubmit} className="mt-6 space-y-5">
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-dark">Email</span>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className={inputClasses}
+                  placeholder="you@natumolan.local"
+                  autoComplete="email"
+                  required
+                />
+              </label>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full cursor-pointer rounded-full bg-primary py-3 text-sm font-semibold text-white shadow-lg shadow-primary/30 transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {loading ? "Signing in…" : "Sign In"}
-            </button>
-          </form>
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-dark">Password</span>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className={`${inputClasses} pr-12`}
+                    placeholder="••••••••"
+                    autoComplete="current-password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((s) => !s)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    title={showPassword ? "Hide password" : "Show password"}
+                    className="absolute right-1.5 top-1/2 flex h-9 w-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-primary/10 hover:text-primary"
+                  >
+                    {showPassword ? <FiEyeOff className="h-5 w-5" /> : <FiEye className="h-5 w-5" />}
+                  </button>
+                </div>
+              </label>
 
-          <div className="mt-8 rounded-2xl border border-gray bg-secondary/60 px-5 py-4 text-xs leading-relaxed text-gray-500 lg:bg-secondary">
-            <p className="font-semibold text-dark">Resident accounts</p>
-            <p className="mt-1">
-              Portal accounts are issued by the Barangay Population Office after
-              residency verification. Visit the BPO with a valid ID to enroll.
-            </p>
-          </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full cursor-pointer rounded-full bg-primary py-3 text-sm font-semibold text-white shadow-lg shadow-primary/30 transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loading ? "Signing in…" : "Sign In"}
+              </button>
+            </form>
+          )}
+
+          {!activation && (
+            <div className="mt-8 rounded-2xl border border-gray bg-secondary/60 px-5 py-4 text-xs leading-relaxed text-gray-500 lg:bg-secondary">
+              <p className="font-semibold text-dark">Resident accounts</p>
+              <p className="mt-1">
+                Your account is created for you when the Barangay Population Office registers you —
+                you do not need to sign up. Sign in with the email on your record; your password is
+                your <strong>last name followed by your birthday</strong> in MMDDYY form, for
+                example <span className="font-mono">Cruz062702</span>. The first time you sign in we
+                will email you a 6-digit code to confirm the account is yours.
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

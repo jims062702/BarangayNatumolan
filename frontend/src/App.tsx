@@ -1,8 +1,10 @@
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import FormValidationStyler from "./components/FormValidationStyler";
+import ErrorBoundary from "./components/ErrorBoundary";
+import NotFound from "./components/NotFound";
 import MainLayout from "./layouts/MainLayout";
 
 // The public landing page loads eagerly — it is what most residents open.
@@ -22,31 +24,46 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 const PortalDashboard = lazy(() => import("./pages/portal/PortalDashboard"));
 const PortalRequests = lazy(() => import("./pages/portal/PortalRequests"));
 const PortalAppointments = lazy(() => import("./pages/portal/PortalAppointments"));
-const PortalCertificates = lazy(() => import("./pages/portal/PortalCertificates"));
 const PortalAnnouncements = lazy(() => import("./pages/portal/PortalAnnouncements"));
 const PortalAssistant = lazy(() => import("./pages/portal/PortalAssistant"));
 const PortalProfile = lazy(() => import("./pages/portal/PortalProfile"));
 
 // Shared core (staff)
+const PortalCases = lazy(() => import("./pages/portal/PortalCases"));
+const BlotterList = lazy(() => import("./pages/services/BlotterList"));
 const ResidentList = lazy(() => import("./pages/residents/ResidentList"));
+const NonResidentList = lazy(() => import("./pages/residents/NonResidentList"));
 const ResidentCreate = lazy(() => import("./pages/residents/ResidentCreate"));
 const ResidentDetail = lazy(() => import("./pages/residents/ResidentDetail"));
 const ResidentEdit = lazy(() => import("./pages/residents/ResidentEdit"));
 const ServiceRequestList = lazy(() => import("./pages/services/ServiceRequestList"));
+const QueueBoard = lazy(() => import("./pages/services/QueueBoard"));
 const CertificateList = lazy(() => import("./pages/services/CertificateList"));
+const LiveChat = lazy(() => import("./pages/chat/LiveChat"));
 const AppointmentScheduler = lazy(() => import("./pages/appointments/AppointmentScheduler"));
+const ReferralList = lazy(() => import("./pages/referrals/ReferralList"));
+const ReportsAnalytics = lazy(() => import("./pages/reports/ReportsAnalytics"));
 
 // VAWC Office
 const VawcCasesList = lazy(() => import("./pages/vawc/VawcCasesList"));
 const VawcCaseDetail = lazy(() => import("./pages/vawc/VawcCaseDetail"));
+const VawcReferrals = lazy(() => import("./pages/vawc/VawcReferrals"));
+const VawcFollowups = lazy(() => import("./pages/vawc/VawcFollowups"));
+const VawcDocuments = lazy(() => import("./pages/vawc/VawcDocuments"));
 const VawcReports = lazy(() => import("./pages/vawc/VawcReports"));
 
 // Lupon Tagapamayapa
 const LuponCasesList = lazy(() => import("./pages/lupon/LuponCasesList"));
 const LuponCaseDetail = lazy(() => import("./pages/lupon/LuponCaseDetail"));
+const LuponHearings = lazy(() => import("./pages/lupon/LuponHearings"));
+const LuponSettlements = lazy(() => import("./pages/lupon/LuponSettlements"));
+const LuponReports = lazy(() => import("./pages/lupon/LuponReports"));
 
 // Population Office
 const HouseholdList = lazy(() => import("./pages/population/HouseholdList"));
+const RbimList = lazy(() => import("./pages/population/RbimList"));
+const RbimForm = lazy(() => import("./pages/population/RbimForm"));
+const RecordsVerification = lazy(() => import("./pages/population/RecordsVerification"));
 const PopulationEvents = lazy(() => import("./pages/population/PopulationEvents"));
 const SectorLists = lazy(() => import("./pages/population/SectorLists"));
 const ResidentAccounts = lazy(() => import("./pages/population/ResidentAccounts"));
@@ -61,6 +78,7 @@ const SkHeroSlides = lazy(() => import("./pages/sk/SkHeroSlides"));
 const SkOfficials = lazy(() => import("./pages/sk/SkOfficials"));
 
 // Management / Admin
+const AdministrativeRecords = lazy(() => import("./pages/records/AdministrativeRecords"));
 const AnnouncementsManage = lazy(() => import("./pages/manage/AnnouncementsManage"));
 const ServiceGuidesManage = lazy(() => import("./pages/manage/ServiceGuidesManage"));
 const UserManagement = lazy(() => import("./pages/admin/UserManagement"));
@@ -82,6 +100,7 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <FormValidationStyler />
+        <ErrorBoundary>
         <Suspense fallback={<PageLoader />}>
         <Routes>
           {/* Public site */}
@@ -104,13 +123,24 @@ export default function App() {
             <Route index element={<PortalDashboard />} />
             <Route path="requests" element={<PortalRequests />} />
             <Route path="appointments" element={<PortalAppointments />} />
-            <Route path="certificates" element={<PortalCertificates />} />
+            {/*
+              The old certificates page, folded into requests.
+
+              A redirect rather than a deletion: the link is in notification
+              emails already sent, and a resident following one should land
+              on the list that now holds their certificate, not on nothing.
+            */}
+            <Route path="certificates" element={<Navigate to="/portal/requests" replace />} />
+            <Route path="cases" element={<PortalCases />} />
             <Route path="announcements" element={<PortalAnnouncements />} />
             <Route path="assistant" element={<PortalAssistant />} />
+            {/* Folded into the profile page; keep the old address working. */}
+            <Route path="family" element={<Navigate to="/portal/profile" replace />} />
             <Route path="profile" element={<PortalProfile />} />
           </Route>
 
-          {/* Staff — shared core (any office) */}
+          {/* The only page every staff account shares — each office's own
+              dashboard is chosen inside <Dashboard/> by office. */}
           <Route
             element={
               <ProtectedRoute staffOnly>
@@ -119,13 +149,148 @@ export default function App() {
             }
           >
             <Route path="/dashboard" element={<Dashboard />} />
+          </Route>
+
+          {/* Resident registry — the Population Office (BPO) owns it. They are
+              the only office that registers a person, so they are the only one
+              that browses the registry. Every other office attaches a resident
+              through the picker, which returns identity fields only. */}
+          <Route
+            element={
+              <ProtectedRoute
+                staffOnly
+                allowedOffices={["Population", "Admin"]}
+                allowedRoles={["Admin"]}
+              >
+                <DashboardLayout />
+              </ProtectedRoute>
+            }
+          >
             <Route path="/residents" element={<ResidentList />} />
+            {/* Their own list: relatives who live elsewhere are on the
+                register but are not constituents, and mixing them into
+                the purok roll makes both lists unusable. */}
+            <Route path="/residents/non-residents" element={<NonResidentList />} />
+            {/*
+              The SAME pages, at an address that says what the record is.
+              /residents/911 could not tell the sidebar, the breadcrumb or a
+              shared link whether 911 lives here — the URL had to be read
+              against the database to know. Each page redirects itself to
+              whichever of the two it belongs on, so however you arrive, the
+              address ends up true.
+            */}
+            <Route path="/residents/non-residents/:id" element={<ResidentDetail />} />
+            <Route path="/residents/non-residents/:id/edit" element={<ResidentEdit />} />
             <Route path="/residents/create" element={<ResidentCreate />} />
             <Route path="/residents/:id" element={<ResidentDetail />} />
             <Route path="/residents/:id/edit" element={<ResidentEdit />} />
+          </Route>
+
+          {/* Counter verification — "is this person registered, and do they
+              have a portal account?" The front desk runs this before filing a
+              certificate, so it is NOT part of the registry group above. */}
+          <Route
+            element={
+              <ProtectedRoute
+                staffOnly
+                allowedOffices={["Main Office", "Population", "Admin"]}
+                allowedRoles={["Admin"]}
+              >
+                <DashboardLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route path="/verify-records" element={<RecordsVerification />} />
+          </Route>
+
+          {/* Front desk — request intake and the window queue. Main Office
+              only: the Lupon works its docket, not the service counter. */}
+          <Route
+            element={
+              <ProtectedRoute
+                staffOnly
+                allowedOffices={["Main Office", "Admin"]}
+                allowedRoles={["Punong Barangay", "Admin"]}
+              >
+                <DashboardLayout />
+              </ProtectedRoute>
+            }
+          >
             <Route path="/services" element={<ServiceRequestList />} />
-            <Route path="/certificates" element={<CertificateList />} />
+            <Route path="/queue" element={<QueueBoard />} />
+            <Route path="/blotter" element={<BlotterList />} />
+          </Route>
+
+          {/* Appointments sit behind the front desk but not with the Clerk,
+              whose remit is requests & certificates (mirrors deny_role:Clerk). */}
+          <Route
+            element={
+              <ProtectedRoute
+                staffOnly
+                allowedOffices={["Main Office", "Admin"]}
+                allowedRoles={["Punong Barangay", "Admin"]}
+                deniedRoles={["Clerk"]}
+              >
+                <DashboardLayout />
+              </ProtectedRoute>
+            }
+          >
             <Route path="/appointments" element={<AppointmentScheduler />} />
+          </Route>
+
+          {/* Certificates & clearances — the clerk runs the counter end to
+              end; the PB/Secretary only sign the printed paper. */}
+          <Route
+            element={
+              <ProtectedRoute
+                staffOnly
+                allowedOffices={["Main Office", "Admin"]}
+                allowedRoles={["Punong Barangay", "Admin"]}
+              >
+                <DashboardLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route path="/certificates" element={<CertificateList />} />
+          </Route>
+
+          {/* Live chat desk — the Secretary answers the website's chat widget.
+              The Clerk is excluded: their remit is the service counter. */}
+          <Route
+            element={
+              <ProtectedRoute
+                staffOnly
+                allowedOffices={["Main Office", "Admin"]}
+                allowedRoles={["Punong Barangay", "Admin"]}
+                deniedRoles={["Clerk"]}
+              >
+                <DashboardLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route path="/chat" element={<LiveChat />} />
+          </Route>
+
+          {/* Cross-office coordination and aggregated reporting — Main Office
+              and the Punong Barangay. Every other desk coordinates and reports
+              inside its own module (VAWC keeps a separate referral trail, the
+              Health Station records referrals on its own forms, the Lupon
+              routes through the CFA, Population has sectoral analytics), and
+              the Clerk is limited to the front desk. */}
+          <Route
+            element={
+              <ProtectedRoute
+                staffOnly
+                allowedOffices={["Main Office", "Admin"]}
+                allowedRoles={["Punong Barangay", "Admin"]}
+                deniedRoles={["Clerk"]}
+              >
+                <DashboardLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route path="/referrals" element={<ReferralList />} />
+            <Route path="/reports" element={<ReportsAnalytics />} />
           </Route>
 
           {/* VAWC Office — isolated */}
@@ -138,6 +303,9 @@ export default function App() {
           >
             <Route path="/vawc/cases" element={<VawcCasesList />} />
             <Route path="/vawc/cases/:id" element={<VawcCaseDetail />} />
+            <Route path="/vawc/referrals" element={<VawcReferrals />} />
+            <Route path="/vawc/followups" element={<VawcFollowups />} />
+            <Route path="/vawc/documents" element={<VawcDocuments />} />
             <Route path="/vawc/reports" element={<VawcReports />} />
           </Route>
 
@@ -155,6 +323,9 @@ export default function App() {
           >
             <Route path="/lupon/cases" element={<LuponCasesList />} />
             <Route path="/lupon/cases/:id" element={<LuponCaseDetail />} />
+            <Route path="/lupon/hearings" element={<LuponHearings />} />
+            <Route path="/lupon/settlements" element={<LuponSettlements />} />
+            <Route path="/lupon/reports" element={<LuponReports />} />
           </Route>
 
           {/* Population Office */}
@@ -170,6 +341,9 @@ export default function App() {
             }
           >
             <Route path="/population/households" element={<HouseholdList />} />
+            <Route path="/population/rbim" element={<RbimList />} />
+            <Route path="/population/rbim/new" element={<RbimForm />} />
+            <Route path="/population/rbim/:id" element={<RbimForm />} />
             <Route path="/population/events" element={<PopulationEvents />} />
             <Route path="/population/sectors" element={<SectorLists />} />
             <Route path="/population/accounts" element={<ResidentAccounts />} />
@@ -205,19 +379,22 @@ export default function App() {
             <Route path="/sk/officials" element={<SkOfficials />} />
           </Route>
 
-          {/* Service guides (AI KB) — Main Office / PB / Admin */}
+          {/* Service guides (AI KB) & administrative records — Main Office / PB / Admin
+              (the Clerk is limited to requests & certificates) */}
           <Route
             element={
               <ProtectedRoute
                 staffOnly
                 allowedOffices={["Main Office"]}
                 allowedRoles={["Punong Barangay", "Admin"]}
+                deniedRoles={["Clerk"]}
               >
                 <DashboardLayout />
               </ProtectedRoute>
             }
           >
             <Route path="/manage/service-guides" element={<ServiceGuidesManage />} />
+            <Route path="/records" element={<AdministrativeRecords />} />
           </Route>
 
           {/* System administration */}
@@ -230,8 +407,13 @@ export default function App() {
           >
             <Route path="/admin/users" element={<UserManagement />} />
           </Route>
+
+          {/* Anything else — without this, an unknown address renders an
+              empty document (the blank white screen). */}
+          <Route path="*" element={<NotFound />} />
         </Routes>
         </Suspense>
+        </ErrorBoundary>
       </BrowserRouter>
     </AuthProvider>
   );

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -16,7 +17,6 @@ export default function PatientVisits() {
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState("");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [patient, setPatient] = useState<Resident | null>(null);
@@ -51,7 +51,6 @@ export default function PatientVisits() {
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!(await confirmAction({ title: "Record this patient visit?", confirmText: "Yes, record" }))) return;
-    setFeedback("");
     try {
       await api.post("/health/visits", {
         patient_id: patient?.id,
@@ -68,10 +67,10 @@ export default function PatientVisits() {
       setCreateOpen(false);
       setPatient(null);
       setReason("");
-      setFeedback("Visit recorded.");
+      toast("Visit recorded.");
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
@@ -90,10 +89,6 @@ export default function PatientVisits() {
           </button>
         }
       />
-
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
 
       <Card>
         <div className="mb-4 flex items-center gap-3">
@@ -151,7 +146,7 @@ export default function PatientVisits() {
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Record Patient Visit" wide>
         <form onSubmit={create} className="grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <FormField label="Patient" required>
+            <FormField label="Patient" required plain>
               <ResidentPicker value={patient} onChange={setPatient} />
             </FormField>
           </div>

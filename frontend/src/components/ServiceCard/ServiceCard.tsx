@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { FiArrowRight } from "react-icons/fi";
 import Modal from "../UI/Modal";
@@ -71,9 +72,9 @@ export default function ServiceCard({ service }: ServiceCardProps) {
               </span>
               <span className="mt-1 block">
                 2. Or{" "}
-                <a href="/login" className="font-semibold text-primary hover:underline">
+                <Link to="/login" className="font-semibold text-primary hover:underline">
                   sign in to the resident portal
-                </a>{" "}
+                </Link>{" "}
                 to request online and track the status from home.
               </span>
             </dd>

@@ -73,12 +73,14 @@ export default function PortalDashboard() {
           >
             <FiHelpCircle aria-hidden="true" /> Ask the service guide
           </Link>
-          <a
-            href="/verify"
+          {/* Link, not <a>: a full reload throws away the verified
+              session and the page comes back looking signed out. */}
+          <Link
+            to="/verify"
             className="inline-flex items-center gap-2 rounded-full border border-primary/30 px-5 py-2.5 text-sm font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
           >
             <FiSearch aria-hidden="true" /> Verify a certificate
-          </a>
+          </Link>
         </div>
       </Card>
 

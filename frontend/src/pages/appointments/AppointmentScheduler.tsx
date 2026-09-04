@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { formatWallClock } from "../../lib/datetime";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
@@ -16,7 +17,6 @@ export default function AppointmentScheduler() {
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState("");
 
   const load = () => {
     setLoading(true);
@@ -48,10 +48,10 @@ export default function AppointmentScheduler() {
       return;
     try {
       await api.post(`/appointments/${appointment.id}/confirm`);
-      setFeedback(`${appointment.appointment_number} confirmed.`);
+      toast(`${appointment.appointment_number} confirmed.`);
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
@@ -60,10 +60,10 @@ export default function AppointmentScheduler() {
     if (!reason) return;
     try {
       await api.post(`/appointments/${appointment.id}/cancel`, { cancellation_reason: reason });
-      setFeedback(`${appointment.appointment_number} cancelled.`);
+      toast(`${appointment.appointment_number} cancelled.`);
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
@@ -73,10 +73,6 @@ export default function AppointmentScheduler() {
         title="Appointments"
         subtitle="Scheduled visits across all offices — residents book from the portal"
       />
-
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
 
       <Card>
         <div className="mb-4 flex items-center gap-3">

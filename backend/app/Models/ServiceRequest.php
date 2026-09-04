@@ -39,9 +39,19 @@ class ServiceRequest extends Model
         return $this->hasMany(Appointment::class);
     }
 
+    /**
+     * The certificate this request produced.
+     *
+     * The LATEST one, explicitly. A request is meant to have exactly one —
+     * CertificateController::store now refuses a second — but records made
+     * before that guard existed can carry two, and an unordered hasOne
+     * returns whichever the database hands back first. That is how a
+     * resident came to be shown "Processing" for a document released weeks
+     * earlier: the abandoned first attempt happened to have the lower id.
+     */
     public function certificate(): \Illuminate\Database\Eloquent\Relations\HasOne
     {
-        return $this->hasOne(CertificateClearance::class);
+        return $this->hasOne(CertificateClearance::class)->latestOfMany();
     }
 
     public function referrals(): HasMany

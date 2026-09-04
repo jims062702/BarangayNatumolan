@@ -1,20 +1,38 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { FiMessageCircle, FiSend, FiVolume2, FiVolumeX, FiX } from "react-icons/fi";
+import {
+  FiHeadphones,
+  FiMessageCircle,
+  FiSend,
+  FiVolume2,
+  FiVolumeX,
+  FiX,
+} from "react-icons/fi";
+import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
+import { useAuth } from "../../contexts/AuthContext";
 import { useSoundMuted } from "../../hooks/useSoundMuted";
 import { playChatSound } from "../../lib/sound";
 import { ensureNotifyPermission, showDesktopNotification } from "../../lib/desktopNotify";
 import logo from "../../assets/logo/logo.svg";
+import type { ChatMessage as LiveMessage } from "../../types";
 
 /**
- * Floating AI chatbot (bottom-right).
+ * Floating chat (bottom-right), with two modes.
  *
- * Talks to a Rasa server through its REST channel. When the Rasa server is
- * not running, it falls back to the built-in service-guide assistant
- * (POST /api/assistant/inquiry) so the widget always answers.
+ * BOT — talks to a Rasa server through its REST channel, falling back to the
+ * built-in service-guide assistant (POST /api/assistant/inquiry) so the widget
+ * always answers.
+ *
+ * LIVE — hands the conversation to a person. The BARANGAY SECRETARY staffs
+ * that desk. It is plain polling rather than a websocket: the barangay runs
+ * this on one machine, and a socket server nobody restarts after a power cut
+ * is worse than a request every few seconds.
  */
 const RASA_URL =
   (import.meta.env.VITE_RASA_URL as string | undefined) ?? "http://localhost:5005";
+
+/** How often the live conversation is refreshed while the panel is open. */
+const LIVE_POLL_MS = 4000;
 
 interface ChatButton {
   title: string;
@@ -45,12 +63,16 @@ function senderId(): string {
   return id;
 }
 
+/** The live conversation survives a page reload; a closed one is forgotten. */
+const LIVE_KEY = "bn-chat-live-token";
+
 const WELCOME: ChatMessage = {
   id: 0,
   from: "bot",
   text:
     "Kumusta! 👋 I'm the Barangay Natumolan assistant. Ask me about certificates, " +
-    "fees, requirements, office hours, or how to use the resident portal.",
+    "fees, requirements, office hours, or how to use the resident portal.\n\n" +
+    "Need a real person? Tap “Talk to the Secretary” below and I'll put you through.",
   buttons: [
     { title: "What certificates can I get?", payload: "What certificates can I get?" },
     { title: "How much are the fees?", payload: "How much are the certificate fees?" },
@@ -67,13 +89,125 @@ export default function ChatWidget() {
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
+  /*
+   * The live desk is for registered residents. The BOT above it is not — a
+   * stranger asking what an indigency certificate needs still gets an answer,
+   * they just cannot take up the Secretary's only chair to ask it.
+   */
+  const { user, loading: sessionLoading } = useAuth();
+  // Not yet known is not the same as "not a resident". Deciding while the
+  // session is still being verified made the widget drop a running chat
+  // back to the bot on every fresh page load.
+  const isResident = !sessionLoading && user?.role === "Resident";
   const [muted, toggleMuted] = useSoundMuted();
   const listRef = useRef<HTMLDivElement | null>(null);
+
+  /* ---- live agent ---- */
+  // "form" is the short intro step; "live" is the running conversation.
+  const [mode, setMode] = useState<"bot" | "form" | "live" | "signin">("bot");
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem(LIVE_KEY));
+  const [liveMessages, setLiveMessages] = useState<LiveMessage[]>([]);
+  const [liveStatus, setLiveStatus] = useState<"Waiting" | "Active" | "Closed">("Waiting");
+  const [agentName, setAgentName] = useState<string | null>(null);
+  const [firstMessage, setFirstMessage] = useState("");
+  /*
+   * Where they are in the line. One Secretary answers one person at a time,
+   * so anyone who is not first is waiting behind somebody — and a wait with
+   * no number on it is indistinguishable from a broken page.
+   */
+  const [queuePosition, setQueuePosition] = useState<number | null>(null);
+  const [queueTotal, setQueueTotal] = useState(0);
+  const [liveError, setLiveError] = useState("");
+  const [starting, setStarting] = useState(false);
+  // Used to ring only for genuinely new agent replies.
+  const lastSeenId = useRef(0);
 
   useEffect(() => {
     // Keep the newest message in view.
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, typing, open]);
+  }, [messages, liveMessages, typing, open, mode]);
+
+  /** Pulls the live thread. Also runs once on mount to restore a session. */
+  const refreshLive = async (activeToken: string) => {
+    try {
+      const response = await api.get(`/chat/${activeToken}`);
+      const { conversation, messages: thread } = response.data.data;
+      setLiveMessages(thread);
+      setLiveStatus(conversation.status);
+      setAgentName(conversation.agent_name ?? null);
+      setQueuePosition(conversation.queue_position ?? null);
+      setQueueTotal(conversation.queue_total ?? 0);
+
+      // Ring (and pop up, if tabbed away) for a reply that is actually new.
+      const newest = [...thread].reverse().find((m: LiveMessage) => m.sender === "agent");
+      if (newest && newest.id > lastSeenId.current) {
+        if (lastSeenId.current !== 0) {
+          playChatSound();
+          if (document.hidden) {
+            showDesktopNotification(
+              newest.sender_name ?? "Barangay Secretary",
+              newest.body,
+              "bn-live-chat"
+            );
+          }
+        }
+        lastSeenId.current = newest.id;
+      }
+    } catch {
+      // A token for a conversation that no longer exists — drop it and fall
+      // back to the bot rather than polling a dead endpoint forever.
+      localStorage.removeItem(LIVE_KEY);
+      setToken(null);
+      setMode("bot");
+    }
+  };
+
+  /*
+   * Restore an unfinished conversation — from the ACCOUNT first.
+   *
+   * The token lives in one browser. Starting on a laptop and opening the
+   * phone used to lose the thread, and with it whatever the Secretary had
+   * already answered. The account is the durable handle now.
+   */
+  useEffect(() => {
+    // Wait for the answer before acting on it.
+    if (sessionLoading) return;
+
+    if (!isResident) {
+      // Signed out: nothing of theirs to restore, and the desk is closed to
+      // them until they sign back in.
+      if (mode === "live") setMode("bot");
+      return;
+    }
+
+    void api
+      .get("/chat/mine")
+      .then((response) => {
+        const { session_token, conversation, messages: thread } = response.data.data;
+        if (!conversation) return;
+
+        localStorage.setItem(LIVE_KEY, session_token);
+        setToken(session_token);
+        setLiveMessages(thread ?? []);
+        setLiveStatus(conversation.status);
+        setAgentName(conversation.agent_name ?? null);
+        setQueuePosition(conversation.queue_position ?? null);
+        setQueueTotal(conversation.queue_total ?? 0);
+        setMode("live");
+      })
+      .catch(() => {
+        // No conversation, or the desk is unreachable — the bot still works.
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isResident, sessionLoading]);
+
+  // Poll while the panel is open and the conversation is still running.
+  useEffect(() => {
+    if (mode !== "live" || !token || !open || liveStatus === "Closed") return;
+    const id = setInterval(() => void refreshLive(token), LIVE_POLL_MS);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, token, open, liveStatus]);
 
   /** Ask Rasa first; if it is unreachable, use the built-in assistant. */
   const askBot = async (text: string): Promise<ChatMessage[]> => {
@@ -95,6 +229,8 @@ export default function ChatWidget() {
             id: nextId++,
             from: "bot",
             text: "Sorry, I did not catch that. Could you say it another way?",
+            // A bot that cannot answer should offer the person who can.
+            buttons: [{ title: "Talk to the Secretary", payload: "__live__" }],
           },
         ];
       }
@@ -117,6 +253,7 @@ export default function ChatWidget() {
             text:
               "I cannot reach the assistant right now. Please try again in a moment, " +
               "or visit the Barangay Main Office (Mon–Fri, 8:00 AM–5:00 PM).",
+            buttons: [{ title: "Talk to the Secretary", payload: "__live__" }],
           },
         ];
       }
@@ -126,6 +263,13 @@ export default function ChatWidget() {
   const send = async (text: string, display?: string) => {
     const clean = text.trim();
     if (!clean || typing) return;
+
+    // The handoff button is a payload, not a question for the bot.
+    if (clean === "__live__") {
+      startHandoff();
+      return;
+    }
+
     setMessages((prev) => [...prev, { id: nextId++, from: "user", text: display ?? clean }]);
     setInput("");
     setTyping(true);
@@ -144,8 +288,108 @@ export default function ChatWidget() {
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (mode === "live") {
+      void sendLive();
+      return;
+    }
     void send(input);
   };
+
+  /**
+   * Opens the step before queueing for the Secretary.
+   *
+   * A signed-out visitor is stopped here rather than at the end: filling in a
+   * message and only then being told to sign in is how a person gives up.
+   */
+  const startHandoff = () => {
+    setLiveError("");
+
+    if (!isResident) {
+      setMode("signin");
+      return;
+    }
+
+    // Carry the last thing they typed into the form — it is usually the thing
+    // they wanted a human for, and retyping it is a small insult.
+    const lastUser = [...messages].reverse().find((m) => m.from === "user");
+    setFirstMessage(lastUser?.text ?? "");
+    setMode("form");
+  };
+
+  const startLive = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!firstMessage.trim()) return;
+    setStarting(true);
+    setLiveError("");
+    try {
+      // No name, no email: the account already carries both, and asking a
+      // resident to retype what the barangay registered them with is the
+      // kind of small insult that makes people give up on a form.
+      const response = await api.post("/chat/start", {
+        message: firstMessage.trim(),
+      });
+      const { session_token, conversation } = response.data.data;
+      localStorage.setItem(LIVE_KEY, session_token);
+      setToken(session_token);
+      setLiveStatus(conversation.status);
+      setQueuePosition(conversation.queue_position ?? null);
+      setQueueTotal(conversation.queue_total ?? 0);
+      setMode("live");
+      lastSeenId.current = 0;
+      await refreshLive(session_token);
+    } catch {
+      setLiveError("We could not reach the barangay just now. Please try again in a moment.");
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const sendLive = async () => {
+    const body = input.trim();
+    if (!body || !token) return;
+    setInput("");
+    // Show it straight away; the poll will replace it with the stored row.
+    setLiveMessages((prev) => [
+      ...prev,
+      { id: -Date.now(), sender: "visitor", body, created_at: new Date().toISOString() },
+    ]);
+    try {
+      await api.post(`/chat/${token}/messages`, { body });
+      await refreshLive(token);
+    } catch {
+      setLiveError("That message did not send. Check your connection and try again.");
+    }
+  };
+
+  const endLive = async () => {
+    if (token) {
+      try {
+        await api.post(`/chat/${token}/end`);
+      } catch {
+        /* closing is best-effort — the local session ends either way */
+      }
+    }
+    localStorage.removeItem(LIVE_KEY);
+    setToken(null);
+    setLiveMessages([]);
+    setAgentName(null);
+    setLiveStatus("Waiting");
+    lastSeenId.current = 0;
+    setMode("bot");
+  };
+
+  const headerSubtitle =
+    mode === "live"
+      ? liveStatus === "Closed"
+        ? "Conversation ended"
+        : agentName
+          ? `${agentName} is with you`
+          : "Waiting for the Barangay Secretary…"
+      : mode === "form"
+        ? "Connecting you to a person"
+        : mode === "signin"
+          ? "Sign in to reach the Secretary"
+          : "Online — ask me anything";
 
   return (
     <>
@@ -160,10 +404,21 @@ export default function ChatWidget() {
           <div className="flex items-center gap-3 bg-gradient-to-r from-primary-dark to-primary px-5 py-4">
             <img src={logo} alt="" aria-hidden="true" className="h-10 w-10 rounded-full bg-white/90 p-1" />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-bold text-white">Natumolan Assistant</p>
+              <p className="truncate text-sm font-bold text-white">
+                {mode === "bot" ? "Natumolan Assistant" : "Barangay Secretary"}
+              </p>
               <p className="flex items-center gap-1.5 text-xs text-white/80">
-                <span aria-hidden="true" className="inline-block h-2 w-2 rounded-full bg-success" />
-                Online — ask me anything
+                <span
+                  aria-hidden="true"
+                  className={`inline-block h-2 w-2 rounded-full ${
+                    mode === "live" && liveStatus === "Waiting"
+                      ? "animate-pulse bg-warning"
+                      : mode === "live" && liveStatus === "Closed"
+                        ? "bg-white/50"
+                        : "bg-success"
+                  }`}
+                />
+                <span className="truncate">{headerSubtitle}</span>
               </p>
             </div>
             <button
@@ -185,66 +440,252 @@ export default function ChatWidget() {
             </button>
           </div>
 
-          {/* Messages */}
-          <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto bg-secondary/60 px-4 py-4">
-            {messages.map((message) => (
-              <div key={message.id}>
-                <div
-                  className={
-                    message.from === "user"
-                      ? "ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-white"
-                      : "w-fit max-w-[85%] whitespace-pre-line rounded-2xl rounded-bl-md bg-white px-4 py-2.5 text-sm text-dark shadow-sm"
-                  }
+          {/* Body */}
+          {mode === "signin" ? (
+            /*
+              The desk is one Secretary at a time, so the queue is only as
+              useful as it is short. Keeping it to registered residents is
+              what makes a queue number mean anything — and it means whoever
+              is answered can actually be looked up, and reached afterwards.
+            */
+            <div className="flex-1 space-y-3 overflow-y-auto bg-secondary/60 px-4 py-4">
+              <p className="rounded-2xl bg-white px-4 py-3 text-sm leading-relaxed text-dark shadow-sm">
+                Talking to the <strong>Barangay Secretary</strong> needs your resident portal
+                account. Signing in means they can see your record while they help you — and you
+                will not be asked to type your name, email or number.
+              </p>
+              <p className="rounded-xl bg-secondary px-4 py-2.5 text-xs leading-relaxed text-gray-500">
+                No account yet? The Population Office creates one when you are registered as a
+                resident, and it is activated with a code sent to your email.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMode("bot")}
+                  className="flex-1 cursor-pointer rounded-full border border-gray bg-white py-2.5 text-xs font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
                 >
-                  {message.text}
-                </div>
-                {message.from === "bot" && message.buttons && message.buttons.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {message.buttons.map((button, index) => (
+                  Back to the assistant
+                </button>
+                <Link
+                  to="/login"
+                  className="flex-1 cursor-pointer rounded-full bg-primary py-2.5 text-center text-xs font-semibold text-white transition-colors hover:bg-primary-dark"
+                >
+                  Sign in
+                </Link>
+              </div>
+            </div>
+          ) : mode === "form" ? (
+            /* Who are you, and what do you need? Kept to three fields — the
+               person is already frustrated enough to want a human. */
+            <form onSubmit={startLive} className="flex-1 space-y-3 overflow-y-auto bg-secondary/60 px-4 py-4">
+              <p className="rounded-2xl bg-white px-4 py-3 text-sm leading-relaxed text-dark shadow-sm">
+                I&rsquo;ll pass you to the <strong>Barangay Secretary</strong> — office hours are
+                Mon–Fri, 8:00 AM–5:00 PM.
+              </p>
+              {liveError && (
+                <p className="rounded-xl bg-danger/10 px-4 py-2.5 text-xs font-medium text-danger">{liveError}</p>
+              )}
+              {/*
+                Nothing is asked about who they are. They are signed in, so the
+                barangay already has their name, their purok and their number —
+                and the Secretary sees all three when the chat arrives.
+              */}
+              <p className="rounded-xl bg-primary/10 px-4 py-2.5 text-xs leading-relaxed text-dark">
+                Signed in as <strong>{user?.name}</strong>. The Secretary will see your resident
+                record, so there is nothing else to fill in.
+              </p>
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold text-dark">How can we help?</span>
+                <textarea
+                  value={firstMessage}
+                  onChange={(e) => setFirstMessage(e.target.value)}
+                  required
+                  rows={3}
+                  placeholder="Describe what you need…"
+                  className="w-full rounded-xl border border-gray bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/25"
+                />
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMode("bot")}
+                  className="flex-1 cursor-pointer rounded-full border border-gray bg-white py-2.5 text-xs font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
+                >
+                  Back to the assistant
+                </button>
+                <button
+                  type="submit"
+                  disabled={starting || !firstMessage.trim()}
+                  className="flex-1 cursor-pointer rounded-full bg-primary py-2.5 text-xs font-semibold text-white transition-colors hover:bg-primary-dark disabled:opacity-50"
+                >
+                  {starting ? "Connecting…" : "Start the chat"}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto bg-secondary/60 px-4 py-4">
+              {mode === "live" ? (
+                <>
+                  {liveStatus === "Waiting" && (
+                    <p className="rounded-2xl bg-warning/15 px-4 py-2.5 text-xs leading-relaxed text-dark">
+                      You are in the queue. The Barangay Secretary will join shortly — you can keep
+                      typing in the meantime, and everything you send will be waiting for them.
+                    </p>
+                  )}
+                  {liveMessages.map((message) => (
+                    <div key={message.id}>
+                      {message.sender === "system" ? (
+                        <p className="mx-auto w-fit max-w-[90%] rounded-full bg-white/70 px-3 py-1 text-center text-[11px] text-gray-500">
+                          {message.body}
+                        </p>
+                      ) : (
+                        <div
+                          className={
+                            message.sender === "visitor"
+                              ? "ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-white"
+                              : "w-fit max-w-[85%] whitespace-pre-line rounded-2xl rounded-bl-md bg-white px-4 py-2.5 text-sm text-dark shadow-sm"
+                          }
+                        >
+                          {message.sender === "agent" && message.sender_name && (
+                            <span className="mb-0.5 block text-[11px] font-semibold text-primary">
+                              {message.sender_name}
+                            </span>
+                          )}
+                          {message.body}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {liveStatus === "Closed" && (
+                    <div className="space-y-2 rounded-2xl bg-white px-4 py-3 text-center shadow-sm">
+                      <p className="text-xs text-gray-500">This conversation has ended.</p>
                       <button
-                        key={index}
                         type="button"
-                        onClick={() => void send(button.payload, button.title)}
-                        className="cursor-pointer rounded-full border border-primary/40 bg-white px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
+                        onClick={endLive}
+                        className="cursor-pointer rounded-full bg-primary px-4 py-1.5 text-xs font-semibold text-white hover:bg-primary-dark"
                       >
-                        {button.title}
+                        Back to the assistant
                       </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-            {typing && (
-              <div aria-label="Assistant is typing" className="flex w-fit gap-1.5 rounded-2xl rounded-bl-md bg-white px-4 py-3 shadow-sm">
-                {[0, 1, 2].map((n) => (
-                  <span
-                    key={n}
-                    className="h-2 w-2 animate-bounce rounded-full bg-primary/60"
-                    style={{ animationDelay: `${n * 150}ms` }}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {messages.map((message) => (
+                    <div key={message.id}>
+                      <div
+                        className={
+                          message.from === "user"
+                            ? "ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-white"
+                            : "w-fit max-w-[85%] whitespace-pre-line rounded-2xl rounded-bl-md bg-white px-4 py-2.5 text-sm text-dark shadow-sm"
+                        }
+                      >
+                        {message.text}
+                      </div>
+                      {message.from === "bot" && message.buttons && message.buttons.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {message.buttons.map((button, index) => (
+                            <button
+                              key={index}
+                              type="button"
+                              onClick={() => void send(button.payload, button.title)}
+                              className="cursor-pointer rounded-full border border-primary/40 bg-white px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
+                            >
+                              {button.title}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {typing && (
+                    <div aria-label="Assistant is typing" className="flex w-fit gap-1.5 rounded-2xl rounded-bl-md bg-white px-4 py-3 shadow-sm">
+                      {[0, 1, 2].map((n) => (
+                        <span
+                          key={n}
+                          className="h-2 w-2 animate-bounce rounded-full bg-primary/60"
+                          style={{ animationDelay: `${n * 150}ms` }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Handoff / end bar */}
+          {mode === "bot" && (
+            <button
+              type="button"
+              onClick={startHandoff}
+              className="flex cursor-pointer items-center justify-center gap-2 border-t border-gray bg-white px-4 py-2.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/5"
+            >
+              <FiHeadphones className="h-4 w-4" aria-hidden="true" />
+              Talk to the Secretary (live agent)
+            </button>
+          )}
+          {/*
+            Where they stand. "Waiting" on its own tells somebody nothing
+            about whether to keep the tab open or come back later; a position
+            and a total tell them exactly that.
+          */}
+          {mode === "live" && liveStatus === "Waiting" && queuePosition !== null && (
+            <div className="border-t border-gray bg-warning/10 px-4 py-2.5">
+              <p className="text-xs font-semibold text-dark">
+                {queuePosition === 1
+                  ? "You are next — the Secretary will be with you shortly."
+                  : `You are number ${queuePosition} in the queue.`}
+              </p>
+              {queueTotal > 1 && (
+                <p className="mt-0.5 text-[11px] text-gray-500">
+                  {queuePosition === 1
+                    ? `${queueTotal} waiting in total.`
+                    : `${queuePosition - 1} ${queuePosition - 1 === 1 ? "person is" : "people are"} ahead of you.`}{" "}
+                  The desk answers one person at a time. You can keep typing — your messages are
+                  saved, and you will be notified when the Secretary joins.
+                </p>
+              )}
+            </div>
+          )}
+
+          {mode === "live" && liveStatus !== "Closed" && (
+            <button
+              type="button"
+              onClick={endLive}
+              className="cursor-pointer border-t border-gray bg-white px-4 py-2 text-xs font-medium text-gray-500 transition-colors hover:text-danger"
+            >
+              End this conversation
+            </button>
+          )}
 
           {/* Input */}
-          <form onSubmit={handleSubmit} className="flex items-center gap-2 border-t border-gray bg-white px-3 py-3">
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Type your question…"
-              aria-label="Type your question"
-              className="flex-1 rounded-full border border-gray bg-secondary/60 px-4 py-2.5 text-sm text-dark outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/25"
-            />
-            <button
-              type="submit"
-              aria-label="Send message"
-              disabled={!input.trim() || typing}
-              className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full bg-primary text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <FiSend className="h-4 w-4" />
-            </button>
-          </form>
+          {mode !== "form" && mode !== "signin" && (
+            <form onSubmit={handleSubmit} className="flex items-center gap-2 border-t border-gray bg-white px-3 py-3">
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={
+                  mode === "live"
+                    ? liveStatus === "Closed"
+                      ? "This conversation has ended"
+                      : "Message the Secretary…"
+                    : "Type your question…"
+                }
+                aria-label={mode === "live" ? "Message the Secretary" : "Type your question"}
+                disabled={mode === "live" && liveStatus === "Closed"}
+                className="flex-1 rounded-full border border-gray bg-secondary/60 px-4 py-2.5 text-sm text-dark outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/25 disabled:opacity-60"
+              />
+              <button
+                type="submit"
+                aria-label="Send message"
+                disabled={!input.trim() || typing || (mode === "live" && liveStatus === "Closed")}
+                className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full bg-primary text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <FiSend className="h-4 w-4" />
+              </button>
+            </form>
+          )}
         </div>
       )}
 
@@ -262,10 +703,11 @@ export default function ChatWidget() {
       >
         {open ? <FiX className="h-6 w-6" /> : <FiMessageCircle className="h-6 w-6" />}
         {!open && (
+          // `animate-ping` (scale 2) reached past the screen edge and gave the
+          // whole page a sideways scroll — see `ping-contained` in index.css.
           <span
             aria-hidden="true"
-            className="absolute inset-0 -z-10 animate-ping rounded-full bg-primary/40"
-            style={{ animationDuration: "2.5s" }}
+            className="animate-ping-contained absolute inset-0 -z-10 rounded-full bg-primary/40"
           />
         )}
       </button>

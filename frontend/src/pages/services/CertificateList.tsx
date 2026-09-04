@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Swal from "sweetalert2";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
-import { useAuth } from "../../contexts/AuthContext";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import Modal from "../../components/UI/Modal";
@@ -42,7 +42,28 @@ function toCertType(serviceType: string): string {
   return TYPES.includes(serviceType) ? serviceType : "Other";
 }
 
-const STATUS_TABS = ["", "Application", "Approved", "Printed", "Released", "Rejected"];
+/**
+ * The counter workflow, in order — three presses from request to hand-over.
+ *
+ * Nobody approves or rejects a certificate, and nobody clicks a signature
+ * either: the resident asks, the clerk prints, the Punong Barangay signs the
+ * paper on its way to the counter, and the clerk hands it over. Each stage is
+ * a thing that happened to the DOCUMENT.
+ */
+const FLOW = ["Pending", "Processing", "Ready to Claim", "Released"];
+
+const STATUS_TABS = ["", ...FLOW, "Cancelled"];
+
+/** One line of plain guidance per stage, shown on the row's detail. */
+const STAGE_HELP: Record<string, string> = {
+  Pending:
+    "A resident requested this online. Accept it to start — nothing else is waiting on anyone.",
+  Processing:
+    "You are preparing this certificate. Check the wording, then press Print: that prints it, tells the resident it is ready to claim, and locks the details.",
+  "Ready to Claim":
+    "Printed and waiting on the counter — get it signed on the way. The resident has already been notified. Release it when they collect it.",
+  Released: "Handed to the resident, who has been notified. The request is complete.",
+};
 
 function openPrintView(certificate: Certificate) {
   const win = window.open("", "_blank", "width=800,height=900");
@@ -70,15 +91,17 @@ function openPrintView(certificate: Certificate) {
 }
 
 export default function CertificateList() {
-  const { user } = useAuth();
   const [rows, setRows] = useState<Certificate[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState("");
 
   const [detail, setDetail] = useState<Certificate | null>(null);
+  // Correcting a typo in the type or purpose before the document is printed.
+  const [editingDetail, setEditingDetail] = useState(false);
+  const [detailType, setDetailType] = useState("");
+  const [detailPurpose, setDetailPurpose] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [certResident, setCertResident] = useState<Resident | null>(null);
   const [residentRequests, setResidentRequests] = useState<ServiceRequest[]>([]);
@@ -89,8 +112,6 @@ export default function CertificateList() {
   const [exempt, setExempt] = useState(false);
   const [exemptReason, setExemptReason] = useState("");
   const [saving, setSaving] = useState(false);
-
-  const isPB = user?.role === "Punong Barangay";
 
   const load = () => {
     setLoading(true);
@@ -108,7 +129,7 @@ export default function CertificateList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, statusFilter]);
 
-  // Live updates: PB approvals/rejections appear without a manual refresh.
+  // Live updates: new online requests appear without a manual refresh.
   useAutoRefresh(load, REFRESH.staff);
 
   const resetCreateForm = () => {
@@ -120,6 +141,11 @@ export default function CertificateList() {
     setFee(String(FEES[TYPES[0]] ?? 0));
     setExempt(false);
     setExemptReason("");
+  };
+
+  const closeCreate = () => {
+    setCreateOpen(false);
+    resetCreateForm();
   };
 
   const openCreate = () => {
@@ -161,7 +187,36 @@ export default function CertificateList() {
     }
   };
 
-  // Changing the type re-applies the standard fee (unless exempt).
+  const openDetailEdit = (certificate: Certificate) => {
+    setDetailType(certificate.certificate_type);
+    setDetailPurpose(certificate.purpose ?? "");
+    setEditingDetail(true);
+  };
+
+  const saveDetailEdit = async () => {
+    if (!detail) return;
+    if (
+      !(await confirmAction({
+        title: "Save these corrections?",
+        text: "The certificate type and purpose will be updated.",
+        confirmText: "Yes, save",
+      }))
+    )
+      return;
+    try {
+      const response = await api.put(`/certificates/${detail.id}`, {
+        certificate_type: detailType,
+        purpose: detailPurpose,
+      });
+      setDetail(response.data.data);
+      setEditingDetail(false);
+      toast(response.data.message);
+      load();
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    }
+  };
+
   const changeType = (type: string) => {
     setCertType(type);
     if (!exempt) setFee(String(FEES[type] ?? 0));
@@ -170,8 +225,7 @@ export default function CertificateList() {
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!certResident) return;
-    if (!(await confirmAction({ title: "File this certificate application?", confirmText: "Yes, file" }))) return;
-    setFeedback("");
+    if (!(await confirmAction({ title: "File this certificate?", confirmText: "Yes, file" }))) return;
     setSaving(true);
     try {
       await api.post("/certificates", {
@@ -179,81 +233,110 @@ export default function CertificateList() {
         service_request_id: selectedRequestId ? Number(selectedRequestId) : undefined,
         certificate_type: certType,
         purpose,
+
         fee_amount: exempt ? 0 : Number(fee),
         is_exempt: exempt,
         exemption_reason: exempt ? exemptReason : undefined,
       });
       setCreateOpen(false);
-      setFeedback(
-        selectedRequestId
-          ? "Certificate application filed — sent to the Punong Barangay for decision."
-          : "Walk-in certificate application filed — sent to the Punong Barangay for decision."
-      );
+      toast("Certificate filed — it is now being processed. Print it when you are ready.");
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     } finally {
       setSaving(false);
     }
   };
 
-  const act = async (
-    certificate: Certificate,
-    action: "approve" | "reject" | "release" | "reprint"
-  ) => {
-    let body: Record<string, string> | undefined;
-    if (action === "reject") {
-      const reason = window.prompt("Reason for rejection (the resident will be notified):", "");
-      if (reason === null) return; // cancelled
-      body = { reason };
-    } else {
-      const prompts: Record<string, { title: string; confirmText: string; danger?: boolean }> = {
-        approve: { title: "Approve this certificate?", confirmText: "Yes, approve" },
-        release: { title: "Release this certificate to the resident?", confirmText: "Yes, release" },
-        reprint: { title: "Log a reprint for this certificate?", confirmText: "Yes, log reprint" },
-      };
-      const p = prompts[action];
-      if (p && !(await confirmAction(p))) return;
-    }
-    setFeedback("");
+  /**
+   * Every step of the workflow goes through here. Each one is a plain "this
+   * happened" confirmation — none of them is a decision about whether the
+   * resident may have their certificate.
+   */
+  type Action = "accept" | "release" | "reprint";
+
+  const PROMPTS: Record<Action, { title: string; text?: string; confirmText: string }> = {
+    accept: {
+      title: "Start this request?",
+      text: "The resident will be told a clerk is preparing their certificate.",
+      confirmText: "Yes, start it",
+    },
+    release: {
+      title: "Release this certificate to the resident?",
+      text: "Confirm only once they have it in hand.",
+      confirmText: "Yes, released",
+    },
+    reprint: { title: "Log a reprint for this certificate?", confirmText: "Yes, log reprint" },
+  };
+
+  const act = async (certificate: Certificate, action: Action) => {
+    if (!(await confirmAction(PROMPTS[action]))) return;
     try {
-      await api.post(`/certificates/${certificate.id}/${action}`, body);
-      setFeedback(`${certificate.certificate_number}: ${action} successful.`);
+      const response = await api.post(`/certificates/${certificate.id}/${action}`);
+      toast(response.data.message);
       setDetail(null);
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
-  // Approved certificate → open the printout, then confirm it printed OK.
-  // Only on "Yes" is it marked Printed, which reveals the Release button.
-  const printAndConfirm = async (certificate: Certificate) => {
-    openPrintView(certificate);
+  /**
+   * Cancelling is the one way off the workflow, for an application that
+   * should never have been filed. The reason is required because the
+   * resident is shown it.
+   */
+  const cancel = async (certificate: Certificate) => {
     const result = await Swal.fire({
-      title: "Did the certificate print successfully?",
-      icon: "question",
+      title: "Cancel this request?",
+      input: "text",
+      inputLabel: "Reason (the resident will see this)",
+      inputPlaceholder: "e.g. Withdrawn by the resident, duplicate request",
+      inputValidator: (value) => (value.trim() ? undefined : "Please give a reason."),
       showCancelButton: true,
-      confirmButtonText: "Yes, it printed successfully",
-      cancelButtonText: "No, cancel",
-      confirmButtonColor: "#723EC3",
+      confirmButtonText: "Yes, cancel it",
+      cancelButtonText: "Keep it",
+      confirmButtonColor: "#DC2626",
       cancelButtonColor: "#6B7280",
       reverseButtons: true,
     });
     if (!result.isConfirmed) return;
-    setFeedback("");
     try {
-      await api.post(`/certificates/${certificate.id}/mark-printed`);
-      setFeedback(`${certificate.certificate_number}: printed — it can now be released.`);
+      const response = await api.post(`/certificates/${certificate.id}/cancel`, {
+        reason: result.value,
+      });
+      toast(response.data.message);
       setDetail(null);
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
+    }
+  };
+
+  /**
+   * Print, and that is the whole middle of the workflow.
+   *
+   * No confirmation dialog: the printout opens in its own window where the
+   * clerk can see it perfectly well, and asking "did it print?" made them
+   * answer for something already in front of them. If it comes out badly they
+   * press Print again — the record has moved on either way, because the
+   * document now exists.
+   */
+  const printAndFinish = async (certificate: Certificate) => {
+    openPrintView(certificate);
+    try {
+      const response = await api.post(`/certificates/${certificate.id}/mark-printed`);
+      toast(response.data.message);
+      setDetail(null);
+      load();
+    } catch (err) {
+      toast(errorMessage(err), "error");
     }
   };
 
   const openDetail = async (certificate: Certificate) => {
     setDetail(certificate); // show list data immediately
+    setEditingDetail(false);
     try {
       const response = await api.get(`/certificates/${certificate.id}`);
       setDetail(response.data.data);
@@ -262,11 +345,69 @@ export default function CertificateList() {
     }
   };
 
+  /** The buttons that make sense for a certificate at its current stage. */
+  const actionsFor = (c: Certificate, size: "sm" | "lg") => {
+    const base =
+      size === "sm"
+        ? "cursor-pointer rounded-full px-3 py-1 text-xs font-semibold"
+        : "cursor-pointer rounded-full px-6 py-2.5 text-sm font-semibold";
+    const primary = `${base} bg-primary text-white hover:bg-primary-dark`;
+    const outline = `${base} border border-primary/40 text-primary hover:bg-primary hover:text-white`;
+    const success = `${base} bg-success text-white hover:opacity-90`;
+    const quiet = `${base} border border-gray text-gray-500 hover:border-primary hover:text-primary`;
+    const danger = `${base} border border-danger/40 text-danger hover:bg-danger hover:text-white`;
+
+    return (
+      <>
+        {c.status === "Pending" && (
+          <button type="button" onClick={() => act(c, "accept")} className={primary}>
+            Accept &amp; start
+          </button>
+        )}
+        {c.status === "Processing" && (
+          <button type="button" onClick={() => printAndFinish(c)} className={primary}>
+            Print
+          </button>
+        )}
+        {c.status === "Ready to Claim" && (
+          <>
+            <button type="button" onClick={() => openPrintView(c)} className={quiet}>
+              Print again
+            </button>
+            <button type="button" onClick={() => act(c, "release")} className={success}>
+              Release to resident
+            </button>
+          </>
+        )}
+        {c.status === "Released" && (
+          <>
+            <button type="button" onClick={() => openPrintView(c)} className={outline}>
+              Print
+            </button>
+            <button
+              type="button"
+              onClick={() => act(c, "reprint")}
+              className={quiet}
+              title={`Reprints: ${c.reprint_count}`}
+            >
+              Log reprint
+            </button>
+          </>
+        )}
+        {["Pending", "Processing"].includes(c.status) && (
+          <button type="button" onClick={() => cancel(c)} className={danger}>
+            Cancel
+          </button>
+        )}
+      </>
+    );
+  };
+
   return (
     <div>
       <PageHeader
         title="Certificates & Clearances"
-        subtitle="Application → PB approval → release, with public QR/reference verification"
+        subtitle="Accept → print → release, with public QR/reference verification"
         actions={
           <button
             type="button"
@@ -278,25 +419,34 @@ export default function CertificateList() {
         }
       />
 
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
-
       {/* How the workflow moves */}
-      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-gray bg-white px-4 py-3 text-xs">
-        <span className="font-semibold text-dark">Workflow:</span>
-        <span className="rounded-full bg-warning/10 px-2.5 py-1 font-semibold text-warning">1. Application</span>
-        <span className="text-gray-400">→</span>
-        <span className="rounded-full bg-primary/10 px-2.5 py-1 font-semibold text-primary">2. PB approves / rejects</span>
-        <span className="text-gray-400">→</span>
-        <span className="rounded-full bg-primary/10 px-2.5 py-1 font-semibold text-primary">3. Print &amp; confirm</span>
-        <span className="text-gray-400">→</span>
-        <span className="rounded-full bg-success/10 px-2.5 py-1 font-semibold text-success">4. Release</span>
-        <span className="ml-1 text-gray-400">
-          — the clerk files the application; the Punong Barangay decides; the clerk prints the approved
-          certificate and confirms it came out right — only then can it be released. The linked request's
-          status follows automatically.
-        </span>
+      <div className="mb-4 rounded-2xl border border-gray bg-white px-4 py-3 text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold text-dark">Workflow:</span>
+          {FLOW.map((stage, index) => (
+            <span key={stage} className="flex items-center gap-2">
+              <span
+                className={`rounded-full px-2.5 py-1 font-semibold ${
+                  stage === "Ready to Claim" || stage === "Released"
+                    ? "bg-success/10 text-success"
+                    : stage === "Pending"
+                      ? "bg-warning/10 text-warning"
+                      : "bg-primary/10 text-primary"
+                }`}
+              >
+                {index + 1}. {stage}
+              </span>
+              {index < FLOW.length - 1 && <span className="text-gray-400">→</span>}
+            </span>
+          ))}
+        </div>
+        <p className="mt-2 text-gray-500">
+          Three presses, all the clerk's: <strong>accept</strong>, <strong>print</strong>,
+          <strong> release</strong>. There is no approval step and no signature to click — the
+          Punong Barangay signs the paper on its way to the counter. The resident is notified
+          automatically when it is <strong>ready to claim</strong> and again when they have
+          <strong> received</strong> it.
+        </p>
       </div>
 
       <Card>
@@ -361,79 +511,7 @@ export default function CertificateList() {
                   >
                     View
                   </button>
-                  {c.status === "Application" && isPB && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => act(c, "approve")}
-                        className="cursor-pointer rounded-full bg-primary px-3 py-1 text-xs font-semibold text-white hover:bg-primary-dark"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => act(c, "reject")}
-                        className="cursor-pointer rounded-full border border-danger/40 px-3 py-1 text-xs font-semibold text-danger hover:bg-danger hover:text-white"
-                      >
-                        Reject
-                      </button>
-                    </>
-                  )}
-                  {c.status === "Application" && !isPB && (
-                    <span
-                      className="rounded-full bg-warning/10 px-2.5 py-1 text-xs font-semibold text-warning"
-                      title="This application is waiting for the Punong Barangay to approve it. Log in as the Punong Barangay to approve, then release."
-                    >
-                      Awaiting PB approval
-                    </span>
-                  )}
-                  {c.status === "Approved" && (
-                    // Release only appears after a successful print (below).
-                    <button
-                      type="button"
-                      onClick={() => printAndConfirm(c)}
-                      className="cursor-pointer rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary hover:text-white"
-                    >
-                      Print
-                    </button>
-                  )}
-                  {c.status === "Printed" && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => openPrintView(c)}
-                        className="cursor-pointer rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary hover:text-white"
-                      >
-                        Print again
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => act(c, "release")}
-                        className="cursor-pointer rounded-full bg-success px-3 py-1 text-xs font-semibold text-white hover:opacity-90"
-                      >
-                        Release
-                      </button>
-                    </>
-                  )}
-                  {c.status === "Released" && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => openPrintView(c)}
-                        className="cursor-pointer rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary hover:text-white"
-                      >
-                        Print
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => act(c, "reprint")}
-                        className="cursor-pointer rounded-full border border-gray px-3 py-1 text-xs font-semibold text-gray-500 hover:border-primary hover:text-primary"
-                        title={`Reprints: ${c.reprint_count}`}
-                      >
-                        Log reprint
-                      </button>
-                    </>
-                  )}
+                  {actionsFor(c, "sm")}
                 </div>
               ),
             },
@@ -455,10 +533,13 @@ export default function CertificateList() {
         />
       </Card>
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New Certificate" wide>
+      <Modal open={createOpen} onClose={closeCreate} title="New Certificate" size="xl">
         <form onSubmit={create} className="space-y-4">
-          <FormField label="Resident" required hint="Search by name or resident number — works for walk-ins too">
-            <ResidentPicker value={certResident} onChange={pickResident} />
+          <FormField label="Resident" required  plain>
+            {/* Constituents only: a barangay certificate says something
+                about somebody who lives here, and the server refuses
+                a non-resident anyway. */}
+            <ResidentPicker value={certResident} onChange={pickResident} residentsOnly />
           </FormField>
 
           {certResident && (
@@ -567,12 +648,12 @@ export default function CertificateList() {
             disabled={!certResident || saving}
             className="w-full cursor-pointer rounded-full bg-primary py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark disabled:opacity-50"
           >
-            {saving ? "Creating…" : "Create certificate application"}
+            {saving ? "Filing…" : "File certificate"}
           </button>
         </form>
       </Modal>
 
-      <Modal open={!!detail} onClose={() => setDetail(null)} title="Certificate Details" wide>
+      <Modal open={!!detail} onClose={() => { setDetail(null); setEditingDetail(false); }} title="Certificate Details" wide>
         {detail && (
           <div className="space-y-5">
             <div className="flex items-center justify-between gap-3">
@@ -586,32 +667,84 @@ export default function CertificateList() {
               <StatusBadge status={detail.status} />
             </div>
 
-            {/* progress */}
-            <div className="flex flex-wrap items-center gap-1 rounded-2xl bg-secondary p-3 text-xs">
-              {(() => {
-                const order = ["Application", "Approved", "Printed", "Released"];
-                const current = order.indexOf(detail.status);
-                return order.map((stage, index) => {
+            {/* Where the document has got to */}
+            {detail.status !== "Cancelled" && (
+              <div className="flex flex-wrap items-center gap-1 rounded-2xl bg-secondary p-3 text-xs">
+                {FLOW.map((stage, index) => {
+                  const current = FLOW.indexOf(detail.status);
                   const done = current >= 0 && index <= current;
                   return (
                     <div key={stage} className="flex items-center">
                       <span className={`rounded-full px-3 py-1 font-semibold ${done ? "bg-primary text-white" : "bg-white text-gray-400"}`}>
                         {index + 1}. {stage}
                       </span>
-                      {index < order.length - 1 && <span className="mx-1 text-gray-300">→</span>}
+                      {index < FLOW.length - 1 && <span className="mx-1 text-gray-300">→</span>}
                     </div>
                   );
-                });
-              })()}
-            </div>
+                })}
+              </div>
+            )}
+
+            {/* Type and purpose stay correctable until the document is
+                printed — after that the paper and the record must agree. */}
+            {editingDetail ? (
+              <div className="grid gap-4 rounded-xl border border-primary/30 bg-primary/5 p-4 sm:grid-cols-2">
+                <FormField label="Certificate type" required>
+                  <select
+                    value={detailType}
+                    onChange={(e) => setDetailType(e.target.value)}
+                    className={inputClasses}
+                  >
+                    {TYPES.map((t) => (
+                      <option key={t}>{t}</option>
+                    ))}
+                  </select>
+                </FormField>
+                <FormField label="Purpose" required>
+                  <input
+                    value={detailPurpose}
+                    onChange={(e) => setDetailPurpose(e.target.value)}
+                    className={inputClasses}
+                  />
+                </FormField>
+                <div className="flex gap-2 sm:col-span-2">
+                  <button
+                    type="button"
+                    onClick={saveDetailEdit}
+                    disabled={!detailPurpose.trim()}
+                    className="flex-1 cursor-pointer rounded-full bg-primary py-2 text-xs font-semibold text-white hover:bg-primary-dark disabled:opacity-50"
+                  >
+                    Save corrections
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingDetail(false)}
+                    className="flex-1 cursor-pointer rounded-full border border-gray py-2 text-xs font-semibold text-dark hover:border-primary hover:text-primary"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              ["Pending", "Processing"].includes(detail.status) && (
+                <button
+                  type="button"
+                  onClick={() => openDetailEdit(detail)}
+                  className="w-full cursor-pointer rounded-full border border-primary/40 py-2 text-xs font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
+                >
+                  Correct type or purpose
+                </button>
+              )
+            )}
 
             <dl className="grid gap-3 sm:grid-cols-2">
               {[
                 ["Resident", detail.resident ? `${detail.resident.first_name} ${detail.resident.last_name}` : "—"],
                 ["Purpose", detail.purpose ?? "—"],
                 ["Fee", detail.is_exempt ? `Exempt${detail.exemption_reason ? ` — ${detail.exemption_reason}` : ""}` : `₱${Number(detail.fee_amount).toFixed(2)}`],
-                ["Filed", detail.created_at ? new Date(detail.created_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "—"],
-                ["Approved", detail.approved_at ? new Date(detail.approved_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "Not yet approved"],
+                ["Requested", detail.created_at ? new Date(detail.created_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "—"],
+                ["Started by", detail.processor?.name ? `${detail.processor.name}${detail.processed_at ? ` · ${new Date(detail.processed_at).toLocaleDateString("en-PH")}` : ""}` : "Not started yet"],
+                ["Printed", detail.printed_at ? new Date(detail.printed_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "Not yet printed"],
                 ["Released", detail.released_at ? new Date(detail.released_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "Not yet released"],
                 ["Reprints", String(detail.reprint_count ?? 0)],
               ].map(([label, value]) => (
@@ -622,66 +755,55 @@ export default function CertificateList() {
               ))}
             </dl>
 
-            {detail.status === "Application" && (
-              <p className="rounded-xl bg-warning/10 px-4 py-3 text-sm text-dark">
-                {isPB
-                  ? "This application is waiting for your decision. Approve or reject it below — approved certificates can then be printed and released."
-                  : "This application is waiting for the Punong Barangay's decision. Once approved, it can be printed and released here."}
+            {(detail.requirements_checklist?.length ?? 0) > 0 && (
+              <div className="rounded-xl border border-gray/70 px-4 py-3">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-400">
+                  Documentary requirements presented
+                </p>
+                <ul className="space-y-1.5 text-sm">
+                  {detail.requirements_checklist?.map((entry) => (
+                    <li key={entry.item} className="flex items-center gap-2">
+                      <span
+                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white ${
+                          entry.presented ? "bg-success" : "bg-danger"
+                        }`}
+                        aria-hidden="true"
+                      >
+                        {entry.presented ? "✓" : "✕"}
+                      </span>
+                      <span className={entry.presented ? "text-dark" : "text-danger"}>
+                        {entry.item}
+                        {!entry.presented && " — not presented"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {STAGE_HELP[detail.status] && (
+              <p
+                className={`rounded-xl px-4 py-3 text-sm text-dark ${
+                  detail.status === "Ready to Claim" || detail.status === "Released"
+                    ? "bg-success/10"
+                    : detail.status === "Pending"
+                      ? "bg-warning/10"
+                      : "bg-primary/10"
+                }`}
+              >
+                {STAGE_HELP[detail.status]}
               </p>
             )}
 
-            {detail.status === "Approved" && (
-              <p className="rounded-xl bg-warning/10 px-4 py-3 text-sm text-dark">
-                Approved — <strong>print the certificate</strong>, then confirm it printed correctly.
-                The Release button appears only after a successful print.
-              </p>
-            )}
-
-            {detail.status === "Printed" && (
-              <p className="rounded-xl bg-primary/10 px-4 py-3 text-sm text-dark">
-                Printed successfully — you can now <strong>release</strong> it to the resident.
-              </p>
-            )}
-
-            {detail.status === "Rejected" && (
+            {detail.status === "Cancelled" && (
               <p className="rounded-xl bg-danger/10 px-4 py-3 text-sm text-dark">
-                Rejected by the Punong Barangay
-                {detail.rejection_reason ? <> — reason: <strong>{detail.rejection_reason}</strong></> : "."}
+                This request was cancelled
+                {detail.cancel_reason ? <> — reason: <strong>{detail.cancel_reason}</strong></> : "."}{" "}
+                The resident was notified.
               </p>
             )}
 
-            <div className="flex flex-wrap gap-2">
-              {detail.status === "Application" && isPB && (
-                <>
-                  <button type="button" onClick={() => act(detail, "approve")} className="cursor-pointer rounded-full bg-primary px-6 py-2.5 text-sm font-semibold text-white hover:bg-primary-dark">
-                    Approve certificate
-                  </button>
-                  <button type="button" onClick={() => act(detail, "reject")} className="cursor-pointer rounded-full border border-danger/40 px-6 py-2.5 text-sm font-semibold text-danger hover:bg-danger hover:text-white">
-                    Reject certificate
-                  </button>
-                </>
-              )}
-              {detail.status === "Approved" && (
-                <button type="button" onClick={() => printAndConfirm(detail)} className="cursor-pointer rounded-full border border-primary/40 px-6 py-2.5 text-sm font-semibold text-primary hover:bg-primary hover:text-white">
-                  Print certificate
-                </button>
-              )}
-              {detail.status === "Printed" && (
-                <>
-                  <button type="button" onClick={() => openPrintView(detail)} className="cursor-pointer rounded-full border border-primary/40 px-6 py-2.5 text-sm font-semibold text-primary hover:bg-primary hover:text-white">
-                    Print again
-                  </button>
-                  <button type="button" onClick={() => act(detail, "release")} className="cursor-pointer rounded-full bg-success px-6 py-2.5 text-sm font-semibold text-white hover:opacity-90">
-                    Release certificate
-                  </button>
-                </>
-              )}
-              {detail.status === "Released" && (
-                <button type="button" onClick={() => openPrintView(detail)} className="cursor-pointer rounded-full border border-primary/40 px-6 py-2.5 text-sm font-semibold text-primary hover:bg-primary hover:text-white">
-                  Print certificate
-                </button>
-              )}
-            </div>
+            <div className="flex flex-wrap gap-2">{actionsFor(detail, "lg")}</div>
           </div>
         )}
       </Modal>

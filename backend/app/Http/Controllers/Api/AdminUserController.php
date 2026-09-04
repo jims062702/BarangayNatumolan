@@ -13,6 +13,37 @@ use Illuminate\Support\Facades\Hash;
  */
 class AdminUserController extends BaseController
 {
+    /*
+     * These MUST match the `role` and `office` enums on the users table. When
+     * they drifted apart, the form offered "Child Development Worker" / "CDC"
+     * — which the database no longer accepts — while offering no SK role at
+     * all, so an SK account simply could not be created. Kept in one place so
+     * store() and update() can never disagree again.
+     */
+    public const ROLES = [
+        'Punong Barangay',
+        'Secretary',
+        'Clerk',
+        'VAWC Officer',
+        'Lupon Secretary',
+        'Population Worker',
+        'Health Personnel',
+        'SK Chairperson',
+        'SK Kagawad',
+        'SK Secretary',
+        'Admin',
+    ];
+
+    public const OFFICES = [
+        'Main Office',
+        'VAWC',
+        'Lupon',
+        'Population',
+        'Health Station',
+        'SK',
+        'Admin',
+    ];
+
     public function index(Request $request)
     {
         $query = User::with('resident:id,resident_number,first_name,last_name');
@@ -38,13 +69,17 @@ class AdminUserController extends BaseController
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users',
             'password' => 'required|min:8',
-            'role' => 'required|in:Punong Barangay,Secretary,Clerk,VAWC Officer,Lupon Secretary,Population Worker,Health Personnel,Child Development Worker,Admin',
-            'office' => 'required|in:Main Office,VAWC,Lupon,Population,Health Station,CDC,Admin',
+            'role' => 'required|in:' . implode(',', self::ROLES),
+            'office' => 'required|in:' . implode(',', self::OFFICES),
         ]);
 
         $user = User::create($validated + [
             'password' => Hash::make($validated['password']),
             'is_active' => true,
+            // An administrator has already verified this person, so there is
+            // nothing to prove by email — only resident portal accounts,
+            // which the system creates on their behalf, need activating.
+            'activated_at' => now(),
             'created_by' => auth()->id(),
         ]);
 
@@ -57,8 +92,10 @@ class AdminUserController extends BaseController
             'name' => 'string|max:255',
             'email' => 'email|unique:users,email,' . $user->id,
             'password' => 'nullable|min:8',
-            'role' => 'in:Punong Barangay,Secretary,Clerk,VAWC Officer,Lupon Secretary,Population Worker,Health Personnel,Child Development Worker,Admin,Resident',
-            'office' => 'in:Main Office,VAWC,Lupon,Population,Health Station,CDC,Admin,Resident',
+            // Resident is allowed here (an existing portal account can be
+            // corrected) but never in store() — those are made by the BPO.
+            'role' => 'in:' . implode(',', [...self::ROLES, 'Resident']),
+            'office' => 'in:' . implode(',', [...self::OFFICES, 'Resident']),
             'is_active' => 'boolean',
         ]);
 

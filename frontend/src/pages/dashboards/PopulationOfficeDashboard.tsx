@@ -30,6 +30,36 @@ interface Analytics {
   population_by_gender: Record<string, number>;
   population_by_zone: { zone_purok: string; count: number }[];
   events_this_year: { event_type: string; count: number }[];
+  dependency: {
+    young_dependents: number;
+    working_age: number;
+    old_dependents: number;
+    unknown_age: number;
+    youth_dependency_ratio: number;
+    old_age_dependency_ratio: number;
+    total_dependency_ratio: number;
+  };
+  migration: {
+    year: number;
+    in_migration: number;
+    out_migration: number;
+    net_migration: number;
+  };
+  growth: {
+    year: number;
+    births: number;
+    deaths: number;
+    natural_increase: number;
+    net_change: number;
+    growth_rate: number;
+    newly_registered: number;
+  };
+  sector_counts: { sector_type: string; count: number }[];
+  intervention: {
+    households_flagged: number;
+    by_indicator: Record<string, number>;
+    indicators: string[];
+  };
 }
 
 // Magnitude = one brand hue. Sex = categorical (CVD-validated: purple/teal/amber).
@@ -66,6 +96,16 @@ export default function PopulationOfficeDashboard() {
     .map(([name, value]) => ({ name, value }))
     .filter((d) => d.value > 0);
   const events = analytics?.events_this_year ?? [];
+
+  // Standard dependency bands: 0-14 and 65+ are carried by 15-64.
+  const dependencyData = analytics
+    ? [
+        { label: "0-14", count: analytics.dependency.young_dependents },
+        { label: "15-64", count: analytics.dependency.working_age },
+        { label: "65+", count: analytics.dependency.old_dependents },
+      ]
+    : [];
+  const sectorData = (analytics?.sector_counts ?? []).filter((s) => s.count > 0);
 
   return (
     <div>
@@ -186,6 +226,165 @@ export default function PopulationOfficeDashboard() {
             )}
           </Card>
         </div>
+      </div>
+
+      {/* Dependency groups, migration & growth */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-3">
+        <Card title="Dependency groups">
+          {dependencyData.length === 0 ? (
+            <p className="py-10 text-center text-sm text-gray-400">No birthdates recorded yet.</p>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={dependencyData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }} barCategoryGap="22%">
+                  <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="3 3" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: AXIS }} axisLine={{ stroke: GRID }} tickLine={false} interval={0} />
+                  <YAxis tick={{ fontSize: 11, fill: AXIS }} axisLine={false} tickLine={false} allowDecimals={false} width={30} />
+                  <Tooltip cursor={{ fill: "rgba(114,62,195,0.06)" }} contentStyle={tooltipStyle} formatter={(v) => [`${v} residents`, "Count"]} />
+                  <Bar dataKey="count" fill={PRIMARY} radius={[4, 4, 0, 0]} maxBarSize={48} isAnimationActive animationDuration={900} animationEasing="ease-out">
+                    <LabelList dataKey="count" position="top" fontSize={11} fill="#4B5563" />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+              <dl className="mt-3 divide-y divide-gray/70 text-sm">
+                {[
+                  ["Youth dependency", analytics?.dependency.youth_dependency_ratio],
+                  ["Old-age dependency", analytics?.dependency.old_age_dependency_ratio],
+                  ["Total dependency", analytics?.dependency.total_dependency_ratio],
+                ].map(([label, value]) => (
+                  <div key={String(label)} className="flex items-center justify-between py-2">
+                    <dt className="text-gray-500">{label}</dt>
+                    <dd className="font-semibold text-dark">{value ?? 0} per 100</dd>
+                  </div>
+                ))}
+              </dl>
+              {(analytics?.dependency.unknown_age ?? 0) > 0 && (
+                <p className="mt-2 text-xs text-gray-400">
+                  {analytics?.dependency.unknown_age} resident(s) have no birthdate and are
+                  excluded from these ratios.
+                </p>
+              )}
+            </>
+          )}
+        </Card>
+
+        <Card title={`Migration — ${analytics?.migration.year ?? new Date().getFullYear()}`}>
+          <dl className="divide-y divide-gray/70 text-sm">
+            {[
+              ["Transferred in", analytics?.migration.in_migration ?? 0],
+              ["Transferred out", analytics?.migration.out_migration ?? 0],
+            ].map(([label, value]) => (
+              <div key={String(label)} className="flex items-center justify-between py-2.5">
+                <dt className="text-gray-500">{label}</dt>
+                <dd className="font-semibold text-dark">{value}</dd>
+              </div>
+            ))}
+            <div className="flex items-center justify-between py-2.5">
+              <dt className="text-gray-500">Net migration</dt>
+              <dd
+                className={`font-bold ${
+                  (analytics?.migration.net_migration ?? 0) < 0 ? "text-danger" : "text-success"
+                }`}
+              >
+                {(analytics?.migration.net_migration ?? 0) > 0 ? "+" : ""}
+                {analytics?.migration.net_migration ?? 0}
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-4 text-xs text-gray-400">
+            Counted from verified Transfer In / Transfer Out events recorded this year.
+          </p>
+        </Card>
+
+        <Card title={`Population growth — ${analytics?.growth.year ?? new Date().getFullYear()}`}>
+          <dl className="divide-y divide-gray/70 text-sm">
+            {[
+              ["Births", analytics?.growth.births ?? 0],
+              ["Deaths", analytics?.growth.deaths ?? 0],
+              ["Natural increase", analytics?.growth.natural_increase ?? 0],
+              ["Newly registered", analytics?.growth.newly_registered ?? 0],
+            ].map(([label, value]) => (
+              <div key={String(label)} className="flex items-center justify-between py-2.5">
+                <dt className="text-gray-500">{label}</dt>
+                <dd className="font-semibold text-dark">{value}</dd>
+              </div>
+            ))}
+            <div className="flex items-center justify-between py-2.5">
+              <dt className="text-gray-500">Growth rate</dt>
+              <dd
+                className={`font-bold ${
+                  (analytics?.growth.growth_rate ?? 0) < 0 ? "text-danger" : "text-success"
+                }`}
+              >
+                {(analytics?.growth.growth_rate ?? 0) > 0 ? "+" : ""}
+                {analytics?.growth.growth_rate ?? 0}%
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-4 text-xs text-gray-400">
+            Natural increase plus net migration, against the headcount at the
+            start of the year.
+          </p>
+        </Card>
+      </div>
+
+      {/* Sectoral counts & intervention shortlist */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+        <Card
+          title="Sectoral counts"
+          action={
+            <Link to="/population/sectors" className="text-xs font-semibold text-primary hover:underline">
+              Open master lists
+            </Link>
+          }
+        >
+          {sectorData.length === 0 ? (
+            <p className="py-10 text-center text-sm text-gray-400">No sectors assigned yet.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={Math.max(120, sectorData.length * 30)}>
+              <BarChart layout="vertical" data={sectorData} margin={{ top: 4, right: 32, bottom: 0, left: 8 }} barCategoryGap="26%">
+                <XAxis type="number" hide allowDecimals={false} />
+                <YAxis type="category" dataKey="sector_type" tick={{ fontSize: 11, fill: AXIS }} axisLine={false} tickLine={false} width={132} />
+                <Tooltip cursor={{ fill: "rgba(114,62,195,0.06)" }} contentStyle={tooltipStyle} formatter={(v) => [`${v} residents`, "Count"]} />
+                <Bar dataKey="count" fill={PRIMARY} radius={[0, 4, 4, 0]} barSize={14} isAnimationActive animationDuration={900} animationEasing="ease-out">
+                  <LabelList dataKey="count" position="right" fontSize={11} fill="#4B5563" />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </Card>
+
+        <Card title="Households needing possible intervention">
+          <div className="mb-4 rounded-2xl bg-secondary p-5 text-center">
+            <p className="text-3xl font-extrabold text-primary">
+              {analytics?.intervention.households_flagged ?? 0}
+            </p>
+            <p className="mt-1 text-xs font-medium text-gray-500">
+              household(s) with at least one vulnerability indicator
+            </p>
+          </div>
+          <dl className="divide-y divide-gray/70 text-sm">
+            {Object.entries(analytics?.intervention.by_indicator ?? {})
+              .filter(([, count]) => count > 0)
+              .sort((a, b) => b[1] - a[1])
+              .map(([indicator, count]) => (
+                <div key={indicator} className="flex items-center justify-between py-2.5">
+                  <dt className="text-gray-500">{indicator}</dt>
+                  <dd className="font-semibold text-dark">{count}</dd>
+                </div>
+              ))}
+          </dl>
+          {Object.values(analytics?.intervention.by_indicator ?? {}).every((c) => c === 0) && (
+            <p className="py-4 text-center text-sm text-gray-400">
+              No households carry a priority-sector indicator yet.
+            </p>
+          )}
+          <p className="mt-4 text-xs text-gray-400">
+            An indicator-based shortlist for follow-up — not an official needs
+            assessment. A household is counted once per indicator, however many
+            members carry it.
+          </p>
+        </Card>
       </div>
     </div>
   );

@@ -2,7 +2,9 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { FiArrowLeft } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
+import { formatWallClock } from "../../lib/datetime";
 import Card from "../../components/UI/Card";
 import Modal from "../../components/UI/Modal";
 import StatusBadge from "../../components/UI/StatusBadge";
@@ -26,7 +28,6 @@ const AGENCIES = [
 export default function VawcCaseDetail() {
   const { id } = useParams();
   const [caseData, setCaseData] = useState<VawcCase | null>(null);
-  const [feedback, setFeedback] = useState("");
 
   const [referralOpen, setReferralOpen] = useState(false);
   const [agency, setAgency] = useState(AGENCIES[0]);
@@ -58,26 +59,24 @@ export default function VawcCaseDetail() {
 
   const submit = async (url: string, payload: object, close: () => void, message: string) => {
     if (!(await confirmAction({ title: "Save this change to the case?", confirmText: "Yes, save" }))) return;
-    setFeedback("");
     try {
       await api.post(url, payload);
       close();
-      setFeedback(message);
+      toast(message);
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
   const updateStatus = async (status: string) => {
     if (!(await confirmAction({ title: `Mark this case as "${status}"?`, confirmText: "Yes, update" }))) return;
-    setFeedback("");
     try {
       await api.put(`/vawc/cases/${id}`, { status });
-      setFeedback(`Case marked ${status}.`);
+      toast(`Case marked ${status}.`);
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
@@ -93,7 +92,7 @@ export default function VawcCaseDetail() {
 
       <PageHeader
         title={caseData.case_code}
-        subtitle={`Reported ${new Date(caseData.report_date).toLocaleDateString("en-PH", { dateStyle: "long" })} · Officer: ${caseData.officer?.name ?? "—"}`}
+        subtitle={`Reported ${formatWallClock(caseData.report_date, { dateStyle: "long", timeStyle: "short" })} · Officer: ${caseData.officer?.name ?? "—"}`}
         actions={
           <div className="flex gap-2">
             {caseData.status === "Active" ? (
@@ -118,15 +117,19 @@ export default function VawcCaseDetail() {
         }
       />
 
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
-
       <div className="grid gap-6 lg:grid-cols-3">
         <Card title="Case profile">
           <dl className="space-y-2.5 text-sm">
             {[
               ["Survivor", caseData.survivor ? `${caseData.survivor.first_name} ${caseData.survivor.last_name}` : "—"],
+              [
+                "Reported by",
+                caseData.reported_by_name
+                  ? `${caseData.reported_by_name}${
+                      caseData.reported_by_relationship ? ` (${caseData.reported_by_relationship})` : ""
+                    }${caseData.reported_by_contact ? ` · ${caseData.reported_by_contact}` : ""}`
+                  : "The survivor herself",
+              ],
               ["Violence type", caseData.violence_type],
               ["Relationship to offender", caseData.relationship_to_offender ?? "—"],
               ["Children involved", caseData.children_involved ? `Yes (${caseData.children_count})` : "No"],
@@ -139,10 +142,27 @@ export default function VawcCaseDetail() {
               </div>
             ))}
           </dl>
+          {(caseData.dependents?.length ?? 0) > 0 && (
+            <div className="mt-4 rounded-xl bg-secondary p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Children / dependents
+              </p>
+              <ul className="mt-1 space-y-1 text-sm text-dark">
+                {caseData.dependents?.map((d) => (
+                  <li key={d.id}>
+                    <Link to={`/residents/${d.id}`} className="text-primary hover:underline">
+                      {[d.first_name, d.middle_name, d.last_name].filter(Boolean).join(" ")}
+                    </Link>{" "}
+                    <span className="text-xs text-gray-500">{d.resident_number}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {caseData.confidential_notes && (
             <div className="mt-4 rounded-xl bg-secondary p-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Confidential notes</p>
-              <p className="mt-1 text-sm text-dark">{caseData.confidential_notes}</p>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-dark">{caseData.confidential_notes}</p>
             </div>
           )}
         </Card>
@@ -320,7 +340,7 @@ export default function VawcCaseDetail() {
           }}
           className="space-y-4"
         >
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField label="Date" required>
               <input type="date" value={fuDate} onChange={(e) => setFuDate(e.target.value)} required className={inputClasses} />
             </FormField>

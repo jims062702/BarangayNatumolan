@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { FiArrowLeft } from "react-icons/fi";
-import { api, errorMessage } from "../../lib/api";
+import { api, errorMessage, fieldErrors } from "../../lib/api";
+import { showServerFieldErrors } from "../../lib/formErrors";
 import { confirmAction } from "../../lib/confirm";
 import Card from "../../components/UI/Card";
 import Breadcrumbs from "../../components/UI/Breadcrumbs";
@@ -11,7 +12,17 @@ import PhoneInput from "../../components/UI/PhoneInput";
 import HouseholdPicker from "../../components/UI/HouseholdPicker";
 import type { Household, Resident } from "../../types";
 
-const CLASSIFICATIONS = ["Senior Citizen", "PWD", "Solo Parent", "Youth", "Child", "Adult", "Others"];
+/** Whole-year age from a YYYY-MM-DD birthdate. */
+function ageFromBirthdate(birthdate: string): number | null {
+  if (!birthdate) return null;
+  const b = new Date(birthdate);
+  if (Number.isNaN(b.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - b.getFullYear();
+  const m = now.getMonth() - b.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age -= 1;
+  return age;
+}
 
 type EditForm = {
   first_name: string;
@@ -27,20 +38,27 @@ type EditForm = {
   household_id: string;
   zone_purok: string;
   residency_status: string;
+  /** Non-residents only: the town or city they actually live in. */
+  address: string;
   length_of_residence_years: string;
   educational_attainment: string;
-  demographic_classification: string;
   is_active: string;
 };
 
 export default function ResidentEdit() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const [resident, setResident] = useState<Resident | null>(null);
   const [form, setForm] = useState<EditForm | null>(null);
   const [selectedHousehold, setSelectedHousehold] = useState<Household | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  // When on, length of residence follows the age; off restores the typed value.
+  const [autoLength, setAutoLength] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  const editAge = form ? ageFromBirthdate(form.birthdate) : null;
 
   useEffect(() => {
     api
@@ -63,14 +81,32 @@ export default function ResidentEdit() {
           household_id: res.household_id ? String(res.household_id) : "",
           zone_purok: res.zone_purok ?? "Purok 1",
           residency_status: res.residency_status ?? "Permanent",
-          length_of_residence_years: "",
-          educational_attainment: "",
-          demographic_classification: res.demographic_classification ?? "",
+          address: res.address ?? "",
+          length_of_residence_years:
+            res.length_of_residence_years != null ? String(res.length_of_residence_years) : "",
+          educational_attainment: res.educational_attainment ?? "",
           is_active: res.is_active === false ? "0" : "1",
         });
       })
       .catch(() => setError("Could not load this resident."));
   }, [id]);
+
+  /*
+   * Puts the address right once the record says what it is — the same
+   * correction the profile makes, for the same reason: /residents/911/edit
+   * tells the sidebar nothing about whether 911 lives here.
+   */
+  useEffect(() => {
+    if (!resident || !id) return;
+
+    const belongs = resident.record_type === "Non-resident"
+      ? `/residents/non-residents/${id}/edit`
+      : `/residents/${id}/edit`;
+
+    if (pathname !== belongs) {
+      navigate(belongs, { replace: true });
+    }
+  }, [resident, id, pathname, navigate]);
 
   const set = (key: keyof EditForm) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
@@ -100,21 +136,39 @@ export default function ResidentEdit() {
       const payload: Record<string, unknown> = {
         ...form,
         household_id: form.household_id ? Number(form.household_id) : null,
-        demographic_classification: form.demographic_classification || null,
+        length_of_residence_years: autoLength
+          ? editAge
+          : form.length_of_residence_years === ""
+            ? null
+            : Number(form.length_of_residence_years),
+        educational_attainment: form.educational_attainment || null,
         is_active: form.is_active === "1",
       };
-      ["length_of_residence_years", "educational_attainment"].forEach((k) => {
-        if (payload[k] === "") delete payload[k];
-      });
       await api.put(`/residents/${id}`, payload);
-      navigate(`/residents/${id}`);
+      navigate(profile);
     } catch (err) {
-      setError(errorMessage(err));
+      // Field errors (e.g. duplicate email) show inline; anything else → banner.
+      const shownInline = showServerFieldErrors(formRef.current, fieldErrors(err));
+      setError(shownInline ? "" : errorMessage(err));
       setSaving(false);
     }
   };
 
   const name = resident ? `${resident.first_name} ${resident.last_name}` : "Resident";
+  /*
+   * A non-resident holds none of the residency fields. Offering a purok and
+   * a residency status for somebody living in Cagayan de Oro is not a blank
+   * field waiting to be filled — it is a question with no true answer, and
+   * whatever the clerk picks becomes a fact on the record.
+   */
+  const isNonResident = resident?.record_type === "Non-resident";
+  /*
+   * The two addresses this page lives at, and the profile it returns
+   * to. Which one is right is only knowable once the record is
+   * loaded — see the same correction in ResidentDetail.
+   */
+  const base = isNonResident ? "/residents/non-residents" : "/residents";
+  const profile = `${base}/${id}`;
 
   return (
     <div>
@@ -128,11 +182,15 @@ export default function ResidentEdit() {
       />
       <PageHeader
         title="Edit Resident Information"
-        subtitle={resident ? `Resident No. ${resident.resident_number}` : "Updating resident record"}
+        subtitle={
+          resident
+            ? `${isNonResident ? "Record" : "Resident"} No. ${resident.resident_number}`
+            : "Updating record"
+        }
         actions={
           <button
             type="button"
-            onClick={() => navigate(`/residents/${id}`)}
+            onClick={() => navigate(profile)}
             className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-gray px-5 py-2.5 text-sm font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
           >
             <FiArrowLeft aria-hidden="true" /> Back
@@ -147,7 +205,7 @@ export default function ResidentEdit() {
         {!form ? (
           <p className="py-10 text-center text-sm text-gray-400">Loading…</p>
         ) : (
-          <form onSubmit={save} className="grid gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+          <form ref={formRef} onSubmit={save} className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
             <FormField label="First name" required>
               <input value={form.first_name} onChange={set("first_name")} required className={inputClasses} />
             </FormField>
@@ -190,36 +248,75 @@ export default function ResidentEdit() {
             <FormField label="Email">
               <input type="email" value={form.email} onChange={set("email")} className={inputClasses} />
             </FormField>
-            <FormField label="Household (Household No. / Address)" hint="Search to set the household, address & Purok">
-              <HouseholdPicker value={form.household_id} selected={selectedHousehold} onSelect={selectHousehold} />
-            </FormField>
-            <FormField label="Zone / Purok">
-              <select value={form.zone_purok} onChange={set("zone_purok")} className={inputClasses}>
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <option key={n}>Purok {n}</option>
-                ))}
-              </select>
-            </FormField>
-            <FormField label="Residency status">
-              <select value={form.residency_status} onChange={set("residency_status")} className={inputClasses}>
-                <option>Permanent</option>
-                <option>Temporary</option>
-                <option>Migrant</option>
-              </select>
-            </FormField>
-            <FormField label="Classification">
-              <select value={form.demographic_classification} onChange={set("demographic_classification")} className={inputClasses}>
-                <option value="">— None —</option>
-                {CLASSIFICATIONS.map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
-            </FormField>
-            <FormField label="Length of residence (years)">
-              <input type="number" min="0" value={form.length_of_residence_years} onChange={set("length_of_residence_years")} className={inputClasses} placeholder="Leave blank to keep" />
-            </FormField>
+            {/*
+              Everything about living HERE. A non-resident is asked instead for
+              the one address fact that is true of them, and told how the rest
+              comes back if they move in.
+            */}
+            {isNonResident ? (
+              <>
+                <FormField
+                  label="Address"
+                  hint="Town or city is enough — where they actually live."
+                >
+                  <input value={form.address} onChange={set("address")} className={inputClasses} />
+                </FormField>
+                <div className="sm:col-span-1 lg:col-span-2">
+                  <p className="rounded-xl bg-secondary/70 px-4 py-3 text-xs leading-relaxed text-gray-600">
+                    This person lives <strong>outside Barangay Natumolan</strong>, so they hold no
+                    household, purok, residency status or sector, and no barangay certificate can
+                    be issued to them. If they have moved in, use{" "}
+                    <strong>Convert to resident</strong> on their record rather than editing these
+                    fields &mdash; it asks for the household and purok, keeps every family link,
+                    and issues them a resident number.
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                <FormField label="Household (Household No. / Address)" hint="Search to set the household, address & Purok" plain>
+                  <HouseholdPicker value={form.household_id} selected={selectedHousehold} onSelect={selectHousehold} />
+                </FormField>
+                <FormField label="Zone / Purok">
+                  <select value={form.zone_purok} onChange={set("zone_purok")} className={inputClasses}>
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <option key={n}>Purok {n}</option>
+                    ))}
+                  </select>
+                </FormField>
+                <FormField label="Residency status">
+                  <select value={form.residency_status} onChange={set("residency_status")} className={inputClasses}>
+                    <option>Permanent</option>
+                    <option>Temporary</option>
+                    <option>Migrant</option>
+                  </select>
+                </FormField>
+              </>
+            )}
+            {!isNonResident && (
+            <div className="block">
+              <span className="mb-1.5 block text-sm font-medium text-dark">Length of residence (years)</span>
+              <input
+                type="number"
+                min="0"
+                value={autoLength ? editAge ?? "" : form.length_of_residence_years}
+                onChange={set("length_of_residence_years")}
+                disabled={autoLength}
+                className={`${inputClasses} ${autoLength ? "bg-secondary text-gray-500" : ""}`}
+              />
+              <label className="mt-2 flex w-fit cursor-pointer items-center gap-2 text-xs font-medium text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={autoLength}
+                  onChange={(e) => setAutoLength(e.target.checked)}
+                  className="h-4 w-4 cursor-pointer accent-primary"
+                />
+                Same as age — auto-count from birthdate{editAge !== null ? ` (${editAge})` : ""}
+              </label>
+            </div>
+            )}
             <FormField label="Educational attainment">
-              <input value={form.educational_attainment} onChange={set("educational_attainment")} className={inputClasses} placeholder="Leave blank to keep" />
+              <input value={form.educational_attainment} onChange={set("educational_attainment")} className={inputClasses} placeholder="e.g. High School Graduate" />
             </FormField>
             <FormField label="Record status">
               <select value={form.is_active} onChange={set("is_active")} className={inputClasses}>
@@ -238,7 +335,7 @@ export default function ResidentEdit() {
               </button>
               <button
                 type="button"
-                onClick={() => navigate(`/residents/${id}`)}
+                onClick={() => navigate(profile)}
                 className="cursor-pointer rounded-full border border-gray px-6 py-2.5 text-sm font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
               >
                 Cancel

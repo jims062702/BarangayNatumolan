@@ -11,10 +11,15 @@ class VawcCase extends Model
     protected $fillable = [
         'case_code',
         'survivor_id',
+        // Who brought the complaint, when that is not the survivor.
+        'reported_by_name',
+        'reported_by_relationship',
+        'reported_by_contact',
         'violence_type',
         'relationship_to_offender',
         'children_involved',
         'children_count',
+        'children_details',
         'immediate_needs',
         'previous_incidents_count',
         'assigned_vawc_officer',
@@ -28,17 +33,28 @@ class VawcCase extends Model
     {
         return [
             'children_involved' => 'boolean',
-            'report_date' => 'date',
+            'report_date' => 'datetime',
             'closed_at' => 'datetime',
             // Confidential content is encrypted at rest (spec requirement).
             'immediate_needs' => 'encrypted',
             'confidential_notes' => 'encrypted',
+            'children_details' => 'encrypted',
         ];
     }
 
     public function survivor(): BelongsTo
     {
         return $this->belongsTo(Resident::class, 'survivor_id');
+    }
+
+    /**
+     * Children/dependents involved, linked to their registry records so the
+     * desk can open them and carry them into a referral.
+     */
+    public function dependents()
+    {
+        return $this->belongsToMany(Resident::class, 'vawc_case_dependents', 'vawc_case_id', 'resident_id')
+            ->withTimestamps();
     }
 
     public function officer(): BelongsTo

@@ -10,7 +10,7 @@ use Illuminate\Http\Request;
  *
  * Usage: middleware('office:VAWC') or middleware('office:Lupon,PB').
  * Entries are office names ("Main Office", "VAWC", "Lupon", "Population",
- * "Health Station", "CDC", "Admin") plus two role shortcuts:
+ * "Health Station", "SK", "Admin") plus two role shortcuts:
  *   PB        → role "Punong Barangay"
  *   AdminRole → role "Admin"
  *

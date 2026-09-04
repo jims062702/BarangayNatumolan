@@ -1,0 +1,18 @@
+# Python virtualenv — machine-specific, and not source code.
+#
+# Absolute paths are baked into its .exe launchers and its compiled .pyd
+# files are tied to one Python build, so a copy carried to another laptop
+# does not run. Rebuild it there instead:
+#
+#   py -3.11 -m venv rasa/.venv
+#   rasa/.venv/Scripts/pip install -r rasa/requirements.txt
+#
+# It was tracked once: 44,000 files, and the reason a push of one commit
+# came to 126 MB and timed out.
+.venv/
+
+# Rasa's own working cache — rebuilt on every train.
+.rasa/
+
+__pycache__/
+*.pyc

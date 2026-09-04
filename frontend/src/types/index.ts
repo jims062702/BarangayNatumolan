@@ -7,6 +7,11 @@ export interface User {
   role: string;
   office: string;
   is_active?: boolean;
+  /**
+   * Null until the account holder has entered the code emailed to them.
+   * Distinct from `is_active`, which is the office switching a login off.
+   */
+  activated_at?: string | null;
   resident_id?: number | null;
   resident?: Resident | null;
 }
@@ -28,17 +33,146 @@ export interface ResidentSector {
   sector_type: string;
   enrolled_date?: string | null;
   is_active: boolean;
+  /**
+   * The card behind the tag. Solo Parent (RA 8972) and PWD are registrations
+   * granted by an office, not judgements a clerk makes — a tag with nothing
+   * behind it is how a benefit reaches the wrong household.
+   */
+  reference_no?: string | null;
+  issued_on?: string | null;
+  valid_until?: string | null;
+  note?: string | null;
+}
+
+/**
+ * One person on somebody's family card. Parents and children carry a `pivot`
+ * holding the relationship label the clerk chose (Mother, Father, Son...).
+ */
+export interface FamilyMember {
+  id: number;
+  resident_number?: string;
+  record_type?: string;
+  address?: string | null;
+  contact_number?: string | null;
+  life_status?: string;
+  date_of_death?: string | null;
+  first_name?: string;
+  middle_name?: string | null;
+  last_name?: string;
+  suffix?: string | null;
+  full_name?: string;
+  gender?: string | null;
+  birthdate?: string | null;
+  age?: number | null;
+  zone_purok?: string | null;
+  is_active?: boolean;
+  relationship?: string | null;
+  pivot?: { relationship?: string | null } | null;
+  /**
+   * Present only on a guardian or a ward. Care is not descent, so it carries
+   * its own facts: why the parents are not raising them, since when, and
+   * whether this is the person the barangay rings first.
+   */
+  guardianship?: {
+    id: number;
+    reason?: string | null;
+    started_on?: string | null;
+    is_primary?: boolean;
+    note?: string | null;
+  } | null;
+}
+
+/** A guardianship that has ended. Kept — a child's care history is asked about. */
+export interface PastGuardian {
+  id: number;
+  guardian_id: number;
+  name?: string | null;
+  relation?: string | null;
+  reason?: string | null;
+  started_on?: string | null;
+  ended_on?: string | null;
+  end_reason?: string | null;
+}
+
+/**
+ * The one sentence about who is raising this person.
+ *
+ * "missing" is the case this whole feature exists for: a child registered
+ * here whose mother and father are both on the register as living somewhere
+ * else, with nobody recorded as looking after them.
+ */
+export interface CareNote {
+  kind: "recorded" | "missing";
+  text: string;
+}
+
+/** The whole tree around one resident, as the family endpoints return it. */
+export interface Family {
+  parents: FamilyMember[];
+  grandparents: FamilyMember[];
+  spouse?: FamilyMember | null;
+  children: FamilyMember[];
+  /** All four of these are DERIVED from the parent/child links, never stored. */
+  siblings: FamilyMember[];
+  aunts_uncles?: FamilyMember[];
+  cousins?: FamilyMember[];
+  self?: FamilyMember | null;
+  /** Care, not descent — nothing on the tree is derived from these. */
+  guardians?: FamilyMember[];
+  wards?: FamilyMember[];
+  past_guardians?: PastGuardian[];
+  care_note?: CareNote | null;
+  /**
+   * How the parents' marriage ended. Present ONLY when the family agreed the
+   * children may see it — the reason is always recorded on the parents'
+   * records, but consent governs who it is shown to.
+   */
+  parents_note?: {
+    end_reason?: string | null;
+    ended_on?: string | null;
+    deceased_name?: string | null;
+  } | null;
 }
 
 export interface Resident {
   id: number;
   resident_number: string;
+  /**
+   * "Resident" or "Non-resident". A non-resident is a relative who lives
+   * outside the barangay: on the register so the family can be recorded, but
+   * not a constituent — no portal account, not in the population count.
+   */
+  record_type?: string;
+  /** Where a non-resident lives; residents get theirs from the household. */
+  address?: string | null;
+  /**
+   * "Alive" or "Deceased". Separate from `is_active`, which only says whether
+   * the record is in use — a duplicate and a person who has died are both
+   * inactive, and the office has to tell them apart.
+   */
+  life_status?: string;
+  date_of_death?: string | null;
+  life_status_note?: string | null;
   first_name: string;
   middle_name?: string | null;
+  /**
+   * The mother's surname before marriage. In Philippine naming this IS the
+   * middle name, and it is what tells two residents apart when their name
+   * and birthday are identical.
+   */
+  mother_maiden_name?: string | null;
+  /*
+   * What this person is to the head of their household — Head, Spouse, Son,
+   * Daughter — worked out from the family links and sent with the household
+   * list. Blank where the links do not say: a house holds cousins, boarders
+   * and grandparents, and the register does not guess.
+   */
+  relation_to_head?: string | null;
   last_name: string;
   suffix?: string | null;
   gender?: string | null;
   birthdate?: string | null;
+  birth_place?: string | null;
   civil_status?: string | null;
   occupation?: string | null;
   contact_number?: string | null;
@@ -46,6 +180,8 @@ export interface Resident {
   household_id?: number | null;
   residency_status?: string;
   zone_purok?: string | null;
+  length_of_residence_years?: number | null;
+  educational_attainment?: string | null;
   demographic_classification?: string | null;
   is_active?: boolean;
   full_name?: string;
@@ -53,8 +189,47 @@ export interface Resident {
   sectors?: ResidentSector[];
   service_requests?: ServiceRequest[];
   certificates?: Certificate[];
-  /** Portal login account, if one has been issued to this resident. */
-  account?: { id: number; email: string; is_active: boolean } | null;
+  /** Portal login account. Issued automatically at registration. */
+  account?: { id: number; email: string; is_active: boolean; activated_at?: string | null } | null;
+  /**
+   * Set when this record was folded into another as a duplicate. A merged
+   * record is a tombstone: kept so its certificates stay verifiable, but it
+   * is nobody's resident any more.
+   */
+  merged_into_id?: number | null;
+  /** Marriage — a mutual link, so both records point at each other. */
+  spouse_id?: number | null;
+  spouse?: FamilyMember | null;
+  /**
+   * Wife / Husband / Partner — decided by the server, because whether a
+   * union is a marriage or a live-in partnership is not something the sex
+   * of the two people can tell you.
+   */
+  spouse_label?: string | null;
+  parents?: FamilyMember[];
+  children?: FamilyMember[];
+  /** Derived from the parent/child links, so appended, never stored. */
+  grandparents?: FamilyMember[];
+  siblings?: FamilyMember[];
+  aunts_uncles?: FamilyMember[];
+  cousins?: FamilyMember[];
+  guardians?: FamilyMember[];
+  wards?: FamilyMember[];
+  past_guardians?: PastGuardian[];
+  care_note?: CareNote | null;
+  parents_note?: {
+    end_reason?: string | null;
+    ended_on?: string | null;
+    deceased_name?: string | null;
+  } | null;
+  /** Returned once, by the register/add-relative endpoints. */
+  portal_account?: {
+    created: boolean;
+    email?: string | null;
+    password?: string | null;
+    reason?: string | null;
+  };
+  family_notes?: string[];
 }
 
 export interface ServiceRequest {
@@ -82,17 +257,58 @@ export interface Certificate {
   service_request_id: number;
   certificate_type: string;
   purpose?: string | null;
+  /** Documentary requirements and whether each was presented at filing. */
+  requirements_checklist?: { item: string; presented: boolean }[] | null;
   fee_amount: string | number;
   is_exempt: boolean;
   exemption_reason?: string | null;
+  /**
+   * Pending | Processing | Printed | For Signature | Ready to Claim |
+   * Released, plus Cancelled. There is no approval state: the clerk moves the
+   * document, nobody decides on it.
+   */
   status: string;
-  rejection_reason?: string | null;
+  cancel_reason?: string | null;
   reference_number: string;
-  approved_at?: string | null;
+  processed_at?: string | null;
+  printed_at?: string | null;
+  signed_at?: string | null;
+  ready_at?: string | null;
+  claimed_at?: string | null;
   released_at?: string | null;
   reprint_count: number;
   created_at?: string;
   resident?: Resident | null;
+  processor?: Partial<User> | null;
+  signer?: Partial<User> | null;
+  releaser?: Partial<User> | null;
+}
+
+/** One live-agent conversation, as the Secretary's desk sees it. */
+export interface ChatConversation {
+  id: number;
+  visitor_name: string;
+  is_resident: boolean;
+  resident_id?: number | null;
+  guest_email?: string | null;
+  guest_contact?: string | null;
+  topic?: string | null;
+  status: "Waiting" | "Active" | "Closed";
+  assigned_to?: number | null;
+  agent_name?: string | null;
+  unread: number;
+  last_message_at?: string | null;
+  created_at?: string;
+  closed_at?: string | null;
+}
+
+export interface ChatMessage {
+  id: number;
+  /** `system` lines narrate the conversation (joined, closed, ...). */
+  sender: "visitor" | "agent" | "system";
+  sender_name?: string | null;
+  body: string;
+  created_at: string;
 }
 
 export interface Appointment {
@@ -135,10 +351,17 @@ export interface VawcCase {
   id: number;
   case_code: string;
   survivor_id: number;
+  /** Who brought the complaint, when that is not the survivor herself. */
+  reported_by_name?: string | null;
+  reported_by_relationship?: string | null;
+  reported_by_contact?: string | null;
   violence_type: string;
   relationship_to_offender?: string | null;
   children_involved: boolean;
   children_count: number;
+  /** Children/dependents involved, linked to their registry records. */
+  dependents?: Resident[];
+  children_details?: string | null;
   immediate_needs?: string | null;
   previous_incidents_count: number;
   status: string;
@@ -162,6 +385,17 @@ export interface VawcIncident {
   created_at?: string;
 }
 
+/**
+ * `vawc_case` is present on the desk-wide worklists (referrals, follow-ups,
+ * documents) and carries the case CODE only — never the survivor's name.
+ */
+export interface VawcCaseRef {
+  id: number;
+  case_code: string;
+  violence_type?: string;
+  status?: string;
+}
+
 export interface VawcReferral {
   id: number;
   referral_agency: string;
@@ -172,6 +406,7 @@ export interface VawcReferral {
   outcome?: string | null;
   followup_schedule?: string | null;
   is_completed: boolean;
+  vawc_case?: VawcCaseRef | null;
 }
 
 export interface VawcFollowup {
@@ -180,10 +415,13 @@ export interface VawcFollowup {
   followup_type: string;
   safety_status: string;
   bpo_compliance: string;
+  referral_attended?: boolean | null;
+  services_received?: string | null;
   notes?: string | null;
   next_followup_date?: string | null;
   closure_recommended: boolean;
   recorder?: User | null;
+  vawc_case?: VawcCaseRef | null;
 }
 
 export interface VawcDocument {
@@ -194,6 +432,17 @@ export interface VawcDocument {
   file_reference?: string | null;
   uploader?: User | null;
   created_at?: string;
+  vawc_case?: VawcCaseRef | null;
+}
+
+/** One entry in the confidential access trail. */
+export interface VawcAccessLog {
+  id: number;
+  action: string;
+  detail?: string | null;
+  created_at: string;
+  user?: Partial<User> | null;
+  vawc_case?: VawcCaseRef | null;
 }
 
 export interface LuponCase {
@@ -201,8 +450,22 @@ export interface LuponCase {
   case_number: string;
   case_title: string;
   case_classification: string;
-  complainant_id: number;
-  respondent_id: number;
+  /** Null when the complainant lives outside the barangay. */
+  complainant_id?: number | null;
+  complainant_name?: string | null;
+  complainant_address?: string | null;
+  complainant_contact?: string | null;
+  /** Server-computed: the complainant's name whichever kind they are. */
+  complainant_display_name?: string;
+  complainant_is_resident?: boolean;
+  /*
+   * Read from the register for a resident, from the case for somebody
+   * outside it — so the page never has to ask which kind of complainant
+   * it is holding.
+   */
+  complainant_display_address?: string | null;
+  complainant_display_contact?: string | null;
+  complainant_reference?: string | null;
   jurisdiction_status: string;
   rejection_reason?: string | null;
   current_stage: string;
@@ -210,7 +473,10 @@ export interface LuponCase {
   date_resolved?: string | null;
   notes?: string | null;
   complainant?: Resident | null;
-  respondent?: Resident | null;
+  /** Everyone complained against — a KP case may name more than one. */
+  respondents?: Resident[];
+  /** Server-computed: their names joined, for lists and search. */
+  respondent_display_names?: string;
   complaint?: LuponComplaint | null;
   hearings?: LuponHearing[];
   settlement?: LuponSettlement | null;
@@ -230,11 +496,30 @@ export interface LuponHearing {
   scheduled_at: string;
   status: string;
   summons_issued: boolean;
+  /** Proof of service — required before a party can be defaulted. */
+  summons_served_date?: string | null;
   complainant_present?: boolean | null;
   respondent_present?: boolean | null;
+  attendance_notes?: string | null;
   proceedings_notes?: string | null;
   outcome?: string | null;
+  recorder?: Partial<User> | null;
   lupon_case?: Partial<LuponCase> | null;
+}
+
+/** One prescribed DILG KP form, with whether this case can produce it. */
+export interface KpForm {
+  code: string;
+  name: string;
+  available: boolean;
+  requires: string;
+}
+
+export interface KpFormPayload {
+  case: LuponCase;
+  barangay: { name: string; municipality: string; province: string };
+  next_hearing?: LuponHearing | null;
+  forms: KpForm[];
 }
 
 export interface LuponSettlement {
@@ -247,7 +532,11 @@ export interface LuponSettlement {
   compliance_deadline?: string | null;
   compliance_notes?: string | null;
   cfa_issued: boolean;
+  cfa_issued_at?: string | null;
   cba_issued: boolean;
+  cba_issued_at?: string | null;
+  closed_at?: string | null;
+  recorder?: Partial<User> | null;
   lupon_case?: Partial<LuponCase> | null;
 }
 
@@ -352,4 +641,72 @@ export interface ServiceGuide {
   schedule?: string | null;
   keywords?: string | null;
   is_active: boolean;
+}
+
+/**
+ * Cross-office / external-agency referral. VAWC referrals are a separate
+ * type (`VawcReferral`) and never appear in this list.
+ */
+export interface Referral {
+  id: number;
+  referral_number: string;
+  resident_id: number;
+  service_request_id?: number | null;
+  referring_office: string;
+  receiving_office: string;
+  referral_reason: string;
+  required_information?: string | null;
+  referral_date: string;
+  acknowledgment_date?: string | null;
+  services_provided?: string | null;
+  referral_outcome?: string | null;
+  followup_date?: string | null;
+  status: string;
+  resident?: Resident | null;
+  service_request?: Partial<ServiceRequest> | null;
+}
+
+/** One walk-in number on an office's queue board. */
+export interface QueueEntry {
+  id: number;
+  queue_number: string;
+  service_request_id: number;
+  resident_id: number;
+  office: string;
+  status: string;
+  queue_time: string;
+  called_time?: string | null;
+  served_time?: string | null;
+  completed_time?: string | null;
+  wait_time_minutes?: number | null;
+  notes?: string | null;
+  resident?: Resident | null;
+  service_request?: Partial<ServiceRequest> | null;
+  server?: Partial<User> | null;
+}
+
+export interface QueueSummary {
+  waiting: number;
+  called: number;
+  serving: number;
+  completed: number;
+  absent: number;
+  now_serving?: string | null;
+  average_wait_minutes: number;
+}
+
+/** Ordinance, resolution, minutes… — the barangay's document archive. */
+export interface AdministrativeRecord {
+  id: number;
+  document_type: string;
+  document_number: string;
+  document_title: string;
+  document_date: string;
+  document_content: string;
+  summary?: string | null;
+  file_reference?: string | null;
+  is_archived: boolean;
+  approved_at?: string | null;
+  creator?: Partial<User> | null;
+  approver?: Partial<User> | null;
 }

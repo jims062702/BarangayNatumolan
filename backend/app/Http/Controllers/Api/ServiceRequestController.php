@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Support\SequenceNumber;
+
 use App\Models\CertificateClearance;
+use App\Models\Resident;
 use App\Models\ServiceRequest;
 use Illuminate\Http\Request;
 
@@ -12,7 +15,7 @@ class ServiceRequestController extends BaseController
      * Service types that produce a certificate, mapped to the certificate
      * type. Non-certificate services (blotter, complaints, …) are not here.
      */
-    private const CERTIFICATE_TYPES = [
+    public const CERTIFICATE_TYPES = [
         'Barangay Clearance' => 'Barangay Clearance',
         'Barangay Certificate' => 'Other',
         'Certificate of Residency' => 'Certificate of Residency',
@@ -48,6 +51,9 @@ class ServiceRequestController extends BaseController
         return $this->success($requests, 'Service requests retrieved');
     }
 
+    /** The only service a non-resident may ask the barangay for. */
+    public const COMPLAINT = 'Complaint';
+
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -57,6 +63,31 @@ class ServiceRequestController extends BaseController
             'request_type' => 'required|in:Walk-in,Online',
             'purpose' => 'nullable|string',
         ]);
+
+        /*
+         * The one thing somebody who does not live here may still do.
+         *
+         * A non-resident cannot be issued anything by this barangay — but a
+         * person wronged by a resident has to be able to say so, whoever they
+         * are and wherever they live. Refusing a complaint because the
+         * complainant lives in the next town would close the only door the
+         * Katarungang Pambarangay leaves open to them.
+         *
+         * So: complaints yes, everything else no.
+         */
+        if (!empty($validated['resident_id'])) {
+            $applicant = Resident::find($validated['resident_id']);
+
+            if ($applicant?->isNonResident() && $validated['service_type'] !== self::COMPLAINT) {
+                return $this->error(
+                    $applicant->full_name . ' lives outside Barangay Natumolan and is on the '
+                        . 'register only as a relative of a resident. The barangay cannot issue '
+                        . 'them a certificate or clearance. A complaint against a resident is the '
+                        . 'one request they may file.',
+                    422
+                );
+            }
+        }
 
         $validated['request_number'] = $this->generateRequestNumber();
 
@@ -91,9 +122,9 @@ class ServiceRequestController extends BaseController
 
     public function update(Request $request, ServiceRequest $serviceRequest)
     {
-        // "Approved" is intentionally not settable here — it is applied
-        // automatically when the Punong Barangay approves the linked
-        // certificate (see CertificateController::approve/reject).
+        // "Approved" is intentionally not settable here. Certificates are
+        // no longer approved by anyone: the request simply follows the
+        // clerk's work on the document (see CertificateController).
         $validated = $request->validate([
             'status' => 'in:Pending,In Progress,Completed,Rejected',
             'purpose' => 'nullable|string',
@@ -108,9 +139,9 @@ class ServiceRequestController extends BaseController
 
         $serviceRequest->update($validated);
 
-        // Starting to process a certificate-type request files the
-        // certificate application automatically — it appears in
-        // Certificates & Clearances awaiting the PB's decision, with no
+        // Starting to process a certificate-type request puts the
+        // certificate on the clerk's desk automatically — it appears in
+        // Certificates & Clearances already being processed, with no
         // separate "+ New certificate" step for the clerk.
         if ($statusChanged && $serviceRequest->status === 'In Progress') {
             $this->fileCertificateApplication($serviceRequest);
@@ -193,27 +224,51 @@ class ServiceRequestController extends BaseController
         ], 'Contact information');
     }
 
+    /**
+     * REQ-2026-000001.
+     *
+     * Six digits, because that is what the register already holds. This door
+     * padded to five and the portal's to six, which is how one series ended
+     * up with REQ-2026-00038 sitting among REQ-2026-000050s — and a text
+     * comparison then read the shorter one as the highest.
+     */
     private function generateRequestNumber(): string
     {
-        $year = date('Y');
-        $count = ServiceRequest::whereYear('created_at', $year)->count() + 1;
-        return 'REQ-' . $year . '-' . str_pad($count, 5, '0', STR_PAD_LEFT);
+        return SequenceNumber::next('service_requests', 'request_number', 'REQ-' . date('Y') . '-', 6);
     }
 
     /**
-     * Files the certificate application for a certificate-type request.
-     * Skipped for non-certificate services, unlinked requests, and requests
-     * that already have a certificate.
+     * Puts a certificate-type request on the clerk's desk. Skipped for
+     * non-certificate services and unlinked requests.
+     *
+     * A resident who asked online already has a Pending certificate waiting
+     * (PortalController::createRequest raises it), and moving the request to
+     * In Progress IS the clerk accepting it — so that one is advanced rather
+     * than duplicated, keeping the request and the document in step.
      */
     private function fileCertificateApplication(ServiceRequest $serviceRequest): void
     {
         $type = self::CERTIFICATE_TYPES[$serviceRequest->service_type] ?? null;
 
-        if (!$type || !$serviceRequest->resident_id || $serviceRequest->certificate()->exists()) {
+        if (!$type || !$serviceRequest->resident_id) {
             return;
         }
 
-        $certificate = CertificateClearance::create([
+        $existing = $serviceRequest->certificate()->first();
+
+        if ($existing) {
+            if ($existing->status === 'Pending') {
+                $existing->update([
+                    'status' => 'Processing',
+                    'processed_by' => auth()->id(),
+                    'processed_at' => now(),
+                ]);
+            }
+
+            return;
+        }
+
+        CertificateClearance::create([
             'certificate_number' => CertificateClearance::nextCertificateNumber(),
             'reference_number' => CertificateClearance::nextReferenceNumber(),
             'resident_id' => $serviceRequest->resident_id,
@@ -222,17 +277,11 @@ class ServiceRequestController extends BaseController
             'purpose' => $serviceRequest->purpose ?: $type,
             'fee_amount' => CertificateController::FEES[$type] ?? 0,
             'is_exempt' => false,
-            'status' => 'Application',
+            // The clerk is working on it right now — no queue, no decision.
+            'status' => 'Processing',
+            'processed_by' => auth()->id(),
+            'processed_at' => now(),
         ]);
 
-        // Ping the Punong Barangay — a certificate is waiting for a decision.
-        \App\Models\Notification::notifyPunongBarangay(
-            'certificate_pending',
-            'Certificate awaiting your approval',
-            ($serviceRequest->resident?->full_name ?? 'A resident') . ' — '
-                . $type . ' (' . $certificate->certificate_number . ')',
-            'certificate',
-            $certificate->id
-        );
     }
 }

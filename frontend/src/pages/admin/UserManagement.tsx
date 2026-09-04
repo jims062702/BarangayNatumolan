@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../lib/api";
+import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -9,6 +10,11 @@ import PageHeader from "../../components/UI/PageHeader";
 import FormField, { inputClasses } from "../../components/UI/FormField";
 import type { User } from "../../types";
 
+/**
+ * Each role's office. Must stay in step with AdminUserController::ROLES /
+ * ::OFFICES and the users-table enums — the SK roles were missing here, so an
+ * SK account could not be created from this form at all.
+ */
 const ROLE_OFFICE: Record<string, string> = {
   "Punong Barangay": "Main Office",
   Secretary: "Main Office",
@@ -17,7 +23,9 @@ const ROLE_OFFICE: Record<string, string> = {
   "Lupon Secretary": "Lupon",
   "Population Worker": "Population",
   "Health Personnel": "Health Station",
-  "Child Development Worker": "CDC",
+  "SK Chairperson": "SK",
+  "SK Kagawad": "SK",
+  "SK Secretary": "SK",
   Admin: "Admin",
 };
 
@@ -27,7 +35,6 @@ export default function UserManagement() {
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState("");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
@@ -58,7 +65,6 @@ export default function UserManagement() {
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!(await confirmAction({ title: "Save this staff account?", confirmText: "Yes, save" }))) return;
-    setFeedback("");
     try {
       await api.post("/admin/users", {
         name,
@@ -71,20 +77,19 @@ export default function UserManagement() {
       setName("");
       setEmail("");
       setPassword("");
-      setFeedback("Staff account created.");
+      toast("Staff account created.");
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
   const toggle = async (user: User) => {
-    setFeedback("");
     try {
       await api.put(`/admin/users/${user.id}`, { is_active: !user.is_active });
       load();
     } catch (err) {
-      setFeedback(errorMessage(err));
+      toast(errorMessage(err), "error");
     }
   };
 
@@ -103,10 +108,6 @@ export default function UserManagement() {
           </button>
         }
       />
-
-      {feedback && (
-        <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">{feedback}</p>
-      )}
 
       <Card>
         <div className="mb-4">

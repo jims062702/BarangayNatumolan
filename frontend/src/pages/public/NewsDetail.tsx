@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { FiArrowLeft, FiCalendar, FiChevronRight, FiClock, FiMapPin } from "react-icons/fi";
 import { api } from "../../lib/api";
+import { scrollToLandingSection } from "../../lib/landingSection";
 import { news as staticNews } from "../../data/news";
 
 interface ApiAnnouncement {
@@ -87,7 +88,9 @@ export default function NewsDetail() {
 
   return (
     <div className="bg-secondary pb-20 pt-28">
-      <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
+      {/* max-w-7xl and the same padding as the navbar, so the breadcrumb starts
+          flush with the logo. At max-w-4xl it sat 192px inboard of it. */}
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         {/* Breadcrumbs */}
         <nav aria-label="Breadcrumb" className="mb-6">
           <ol className="flex flex-wrap items-center gap-1.5 text-sm text-gray-500">
@@ -96,7 +99,18 @@ export default function NewsDetail() {
             </li>
             <li aria-hidden="true"><FiChevronRight className="h-4 w-4" /></li>
             <li>
-              <a href="/#news" className="transition-colors hover:text-primary">
+              {/* A plain "/#news" reloads the app and still lands on Home,
+                  because the section is not in the DOM when the browser
+                  resolves the fragment. */}
+              <a
+                href="/#news"
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigate("/");
+                  scrollToLandingSection("news");
+                }}
+                className="transition-colors hover:text-primary"
+              >
                 News &amp; Announcements
               </a>
             </li>
@@ -115,6 +129,11 @@ export default function NewsDetail() {
             </p>
             <a
               href="/#news"
+              onClick={(e) => {
+                e.preventDefault();
+                navigate("/");
+                scrollToLandingSection("news");
+              }}
               className="mt-6 inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
             >
               <FiArrowLeft aria-hidden="true" /> Back to News &amp; Announcements
@@ -135,7 +154,12 @@ export default function NewsDetail() {
 
         {item && (
           <article className="overflow-hidden rounded-3xl bg-white shadow-lg shadow-primary/5">
-            <img src={item.image} alt={item.title} className="h-72 w-full object-cover sm:h-96" />
+            {/* Taller to stay in proportion now that the card is wider. */}
+            <img
+              src={item.image}
+              alt={item.title}
+              className="h-72 w-full object-cover sm:h-[30rem]"
+            />
             <div className="p-6 sm:p-10">
               {item.category && (
                 <span className="inline-block rounded-full bg-primary/10 px-3.5 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
@@ -160,7 +184,10 @@ export default function NewsDetail() {
                   <FiMapPin className="shrink-0 text-primary" aria-hidden="true" /> {item.location}
                 </span>
               </div>
-              <p className="mt-6 whitespace-pre-line text-base leading-relaxed text-gray-600">
+              {/* Larger body text, but the line length is capped: the card is
+                  now 1280px wide and prose that runs the full width is very
+                  hard to read back to the next line. */}
+              <p className="mt-6 max-w-4xl whitespace-pre-line text-lg leading-relaxed text-gray-600">
                 {item.description}
               </p>
             </div>
