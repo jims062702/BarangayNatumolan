@@ -6,6 +6,7 @@ import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
 import StatTile from "../../components/UI/StatTile";
 import PageHeader from "../../components/UI/PageHeader";
+import RevealGroup from "../../components/UI/RevealGroup";
 
 export default function SkDashboard() {
   const [heroCount, setHeroCount] = useState(0);
@@ -39,11 +40,11 @@ export default function SkDashboard() {
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <RevealGroup className="grid gap-4 sm:grid-cols-3">
         <StatTile label="Home Pictures" value={heroCount} icon={FiImage} />
         <StatTile label="News & Announcements" value={newsCount} icon={FiBell} tone="warning" />
         <StatTile label="Officials Listed" value={officialCount} icon={FiAward} tone="success" />
-      </div>
+      </RevealGroup>
 
       <Card title="Manage landing content" className="mt-6">
         <div className="grid gap-3 sm:grid-cols-3">

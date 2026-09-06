@@ -6,6 +6,7 @@ import Card from "../../components/UI/Card";
 import PageHeader from "../../components/UI/PageHeader";
 import StatusBadge from "../../components/UI/StatusBadge";
 import type { PortalBlotter, PortalKpCase } from "../../types/blotter";
+import { RowsSkeleton } from "../../components/UI/Skeleton";
 
 /**
  * The resident's own cases — what they filed, and what was filed on them.
@@ -62,7 +63,7 @@ export default function PortalCases() {
 
       {loading ? (
         <Card>
-          <p className="py-10 text-center text-sm text-gray-400">Loading…</p>
+          <RowsSkeleton rows={4} what="your cases" />
         </Card>
       ) : nothing ? (
         <Card>

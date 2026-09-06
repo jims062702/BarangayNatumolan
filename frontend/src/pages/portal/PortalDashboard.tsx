@@ -9,6 +9,7 @@ import StatTile from "../../components/UI/StatTile";
 import StatusBadge from "../../components/UI/StatusBadge";
 import PageHeader from "../../components/UI/PageHeader";
 import type { Announcement, Appointment, Resident, ServiceRequest } from "../../types";
+import RevealGroup from "../../components/UI/RevealGroup";
 
 interface PortalHome {
   resident: Resident;
@@ -46,12 +47,12 @@ export default function PortalDashboard() {
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <RevealGroup className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Active Requests" value={home?.stats.active_requests ?? 0} icon={FiClipboard} tone="warning" />
         <StatTile label="Total Requests" value={home?.stats.total_requests ?? 0} icon={FiFileText} />
         <StatTile label="Upcoming Appointments" value={home?.stats.upcoming_appointments ?? 0} icon={FiCalendar} tone="success" />
         <StatTile label="Certificates Ready" value={home?.stats.certificates_ready ?? 0} icon={FiAward} tone="danger" />
-      </div>
+      </RevealGroup>
 
       <Card title="Quick actions" className="mt-6">
         <div className="flex flex-wrap gap-3">

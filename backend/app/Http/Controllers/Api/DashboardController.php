@@ -219,43 +219,6 @@ class DashboardController extends BaseController
     }
 
     /**
-     * Get service statistics
-     */
-    public function getServiceStatistics(Request $request)
-    {
-        $month = $request->input('month', date('m'));
-        $year = $request->input('year', date('Y'));
-        
-        $requests = ServiceRequest::whereMonth('created_at', $month)
-            ->whereYear('created_at', $year)
-            ->get();
-        
-        $completed = $requests->where('status', 'Completed')->count();
-        $pending = $requests->where('status', 'Pending')->count();
-        $rejected = $requests->where('status', 'Rejected')->count();
-        
-        return $this->success([
-            'period' => [
-                'month' => $month,
-                'year' => $year,
-            ],
-            'total_requests' => $requests->count(),
-            'by_status' => [
-                'completed' => $completed,
-                'pending' => $pending,
-                'rejected' => $rejected,
-                'in_progress' => $requests->where('status', 'In Progress')->count(),
-            ],
-            'by_office' => $requests->groupBy('office')->map(fn ($group) => $group->count()),
-            'by_service_type' => $requests->groupBy('service_type')->map(fn ($group) => $group->count()),
-            'completion_rate' => $requests->count() > 0 
-                ? round(($completed / $requests->count()) * 100, 2)
-                : 0,
-            'average_processing_time' => $this->calculateAverageProcessingTime($requests),
-        ], 'Service statistics retrieved');
-    }
-
-    /**
      * Punong Barangay executive view (module 1.6): everything waiting on the
      * PB plus the barangay-wide service picture — workload, aging requests,
      * most-requested services and the latest directives.
@@ -286,19 +249,6 @@ class DashboardController extends BaseController
                 ->get(['id', 'document_type', 'document_number', 'document_title', 'document_date', 'created_by']),
             'documents_awaiting_count' => \App\Models\AdministrativeRecord::whereNull('approved_at')
                 ->where('is_archived', false)
-                ->count(),
-
-            // Referrals the barangay owes a follow-up on (VAWC excluded by design).
-            'referrals_requiring_action' => \App\Models\Referral::with('resident:id,first_name,last_name')
-                ->whereNotNull('followup_date')
-                ->whereDate('followup_date', '<=', today())
-                ->whereNotIn('status', ['Completed', 'Not Attended'])
-                ->orderBy('followup_date')
-                ->limit(8)
-                ->get(),
-            'referrals_action_count' => \App\Models\Referral::whereNotNull('followup_date')
-                ->whereDate('followup_date', '<=', today())
-                ->whereNotIn('status', ['Completed', 'Not Attended'])
                 ->count(),
 
             // Where the open work is sitting right now.

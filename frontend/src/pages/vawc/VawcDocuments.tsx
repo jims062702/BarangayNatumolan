@@ -4,6 +4,8 @@ import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { FiEdit2, FiEye } from "react-icons/fi";
+import RowAction, { RowActions } from "../../components/UI/RowAction";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import Modal from "../../components/UI/Modal";
@@ -211,27 +213,22 @@ export default function VawcDocuments() {
               {
                 header: "Actions",
                 render: (d: VawcDocument) => (
-                  <div className="flex gap-1.5">
-                    <button
-                      type="button"
+                  <RowActions>
+                    <RowAction
+                      label="View document"
+                      icon={FiEye}
+                      tone="primary"
                       onClick={() => setViewing(d)}
-                      className="cursor-pointer rounded-full bg-primary px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-primary-dark"
-                    >
-                      View
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openEdit(d)}
-                      className="cursor-pointer rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
-                    >
-                      Edit
-                    </button>
-                  </div>
+                    />
+                    <RowAction label="Edit document" icon={FiEdit2} onClick={() => openEdit(d)} />
+                  </RowActions>
                 ),
               },
             ]}
             rows={documents}
             rowKey={(d) => d.id}
+            numbered
+            total={documents.length}
             searchable
             searchPlaceholder="Search by case code, title or type…"
             getSearchText={(d) =>
@@ -262,6 +259,7 @@ export default function VawcDocuments() {
             ]}
             rows={logs}
             rowKey={(l) => l.id}
+            numbered
             searchable
             searchPlaceholder="Search the trail by case code, action or officer…"
             getSearchText={(l) =>

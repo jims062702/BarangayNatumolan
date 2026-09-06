@@ -9,12 +9,20 @@ import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import Modal from "../../components/UI/Modal";
 import StatusBadge from "../../components/UI/StatusBadge";
+import { FiEdit2, FiEye, FiPlus } from "react-icons/fi";
+import RowAction, { RowActions } from "../../components/UI/RowAction";
 import PageHeader from "../../components/UI/PageHeader";
 import FormField, { inputClasses } from "../../components/UI/FormField";
+import ChoiceGroup from "../../components/UI/ChoiceGroup";
 import PhoneInput from "../../components/UI/PhoneInput";
 import ResidentPicker from "../../components/ResidentPicker";
 import ResidentMultiPicker from "../../components/ResidentMultiPicker";
 import type { Resident, VawcCase } from "../../types";
+import PeriodFilter, {
+  ALL_TIME,
+  periodParams,
+  type Period,
+} from "../../components/UI/PeriodFilter";
 
 const VIOLENCE_TYPES = ["Physical", "Psychological", "Economic", "Sexual", "Mixed"];
 
@@ -25,15 +33,175 @@ const localNow = () => {
   return now.toISOString().slice(0, 16);
 };
 
+/**
+ * How urgent a case is, most first.
+ *
+ * Words, not colours. A colour is unreadable to a screen reader and
+ * indistinguishable to a colour-blind officer, and this is the field that
+ * decides who gets visited tonight.
+ */
+const RISK_LEVELS = ["Critical", "High", "Medium", "Low"] as const;
+
+/**
+ * Who the alleged offender is to the survivor.
+ *
+ * Typed free-hand before, so the same relationship arrived as "husband",
+ * "Asawa", "live in partner" and "partner (live-in)" — four spellings that
+ * no report could add up.
+ *
+ * The list follows RA 9262, which is written in terms of exactly these
+ * relationships: a husband or former husband, someone she has or had a
+ * sexual or dating relationship with, someone she has a child with, or her
+ * own child. A relationship outside the list is still recordable — the law
+ * did not anticipate every household, and neither does this.
+ */
+const OFFENDER_RELATIONSHIPS = [
+  "Husband",
+  "Former husband",
+  "Live-in partner",
+  "Former live-in partner",
+  "Boyfriend",
+  "Former boyfriend",
+  "Father of her child",
+  "Parent",
+  "Child",
+  "Sibling",
+  "Other relative",
+  "Employer",
+  "Other",
+];
+
+/**
+ * One band of the intake form.
+ *
+ * The form is long because the law asks a lot at one desk. Three headings
+ * make it three shorter forms: who this is about, what happened and how
+ * dangerous it is now, and what the office is keeping. Without them it is
+ * twenty boxes in a column and the officer loses their place mid-interview.
+ */
+function Band({ title, hint, children }: {
+  title: string;
+  hint?: string;
+  /** A band may be a heading on its own; the fields that follow are siblings. */
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="sm:col-span-2 lg:col-span-3">
+      <div className="mb-2 border-b border-gray pb-1.5">
+        <p className="text-sm font-bold text-dark">{title}</p>
+        {hint && <p className="mt-0.5 text-xs text-gray-500">{hint}</p>}
+      </div>
+      {children && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{children}</div>
+      )}
+    </div>
+  );
+}
+
+/** How the complaint reached the barangay. */
+const REPORTING_CHANNELS = [
+  "Walk-in",
+  "Referral",
+  "Hotline",
+  "Barangay official",
+  "Health worker",
+  "Police",
+  "Other",
+];
+
+/**
+ * What a survivor needs, as a list rather than a paragraph.
+ *
+ * Free text could not be counted, so nobody could answer "how many survivors
+ * this quarter needed shelter?" — which is the question a barangay budget is
+ * built on. "Other" stays, because the need nobody anticipated is exactly the
+ * one worth reading.
+ */
+const IMMEDIATE_NEEDS = [
+  "Medical assistance",
+  "Temporary shelter",
+  "Psychological support",
+  "Legal assistance",
+  "Protection order assistance",
+  "Police intervention",
+  "Financial assistance",
+];
+/**
+ * How urgent a case is, said in words.
+ *
+ * Colour carries it too, but never alone: a colour is nothing to a screen
+ * reader and two of these are indistinguishable to a colour-blind officer —
+ * and this is the field that decides who gets visited tonight.
+ *
+ * "Not assessed" is its own state and is not dressed as Low. A case nobody
+ * has judged is not a safe case; it is an unjudged one, and the docket should
+ * say which.
+ */
+function RiskBadge({ level }: { level?: string | null }) {
+  if (!level) {
+    return <span className="text-xs text-gray-400">Not assessed</span>;
+  }
+
+  const tone: Record<string, string> = {
+    Critical: "bg-danger text-white",
+    High: "bg-danger/15 text-danger",
+    Medium: "bg-warning/20 text-amber-700",
+    Low: "bg-secondary text-gray-600",
+  };
+
+  return (
+    <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${tone[level] ?? "bg-secondary text-gray-600"}`}>
+      {level}
+    </span>
+  );
+}
+
+/**
+ * When the case is next due, and whether that day has passed.
+ *
+ * A date on its own does not say "this one is late" — and late is the only
+ * reason to read this column.
+ */
+function NextDue({ on }: { on?: string | null }) {
+  if (!on) {
+    return <span className="text-xs text-gray-400">None scheduled</span>;
+  }
+
+  const due = new Date(on);
+  const overdue = due.setHours(23, 59, 59, 999) < Date.now();
+
+  return (
+    <span className={`text-xs ${overdue ? "font-bold text-danger" : "text-dark"}`}>
+      {new Date(on).toLocaleDateString("en-PH", { dateStyle: "medium" })}
+      {overdue && " · overdue"}
+    </span>
+  );
+}
 export default function VawcCasesList() {
   const [rows, setRows] = useState<VawcCase[]>([]);
+
+  /* Which stretch of time the docket is showing. */
+  const [period, setPeriod] = useState<Period>(ALL_TIME);
+  const [windowLabel, setWindowLabel] = useState<string | null>(null);
+  const [years, setYears] = useState<number[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const [intakeOpen, setIntakeOpen] = useState(false);
   const [survivor, setSurvivor] = useState<Resident | null>(null);
-  const [violenceType, setViolenceType] = useState(VIOLENCE_TYPES[0]);
+  /*
+   * Empty, not the first type.
+   *
+   * The dropdown was given a "Select type…" placeholder but the state still
+   * started on VIOLENCE_TYPES[0] — so the box read "Physical" from the
+   * moment it opened, and a form submitted without anybody reading that line
+   * recorded physical violence. Changing what the list OFFERS without
+   * changing what it HOLDS fixed nothing.
+   */
+  const [violenceType, setViolenceType] = useState("");
   const [relationship, setRelationship] = useState("");
   // Dependents are picked from the registry; the count follows the picks.
   const [dependents, setDependents] = useState<Resident[]>([]);
@@ -43,7 +211,6 @@ export default function VawcCasesList() {
   const [reportedByName, setReportedByName] = useState("");
   const [reportedByRelationship, setReportedByRelationship] = useState("");
   const [reportedByContact, setReportedByContact] = useState("");
-  const [immediateNeeds, setImmediateNeeds] = useState("");
   // Recorded, not assumed: an intake encoded the next morning must carry the
   // hour the complaint was actually made.
   const [reportedAt, setReportedAt] = useState(localNow);
@@ -56,6 +223,52 @@ export default function VawcCasesList() {
   const [editSurvivor, setEditSurvivor] = useState<Resident | null>(null);
   const [editReportedByOther, setEditReportedByOther] = useState(false);
   const [editDependents, setEditDependents] = useState<Resident[]>([]);
+  /*
+   * The incident itself: when, where, and whether it is still happening.
+   *
+   * Everything else on this form is history. These are the only questions
+   * that say whether she is safe tonight.
+   */
+  const [occurredAt, setOccurredAt] = useState("");
+  const [incidentLocation, setIncidentLocation] = useState("");
+  /*
+   * Three answers, and "unanswered" is a fourth state.
+   *
+   * These were boolean|null, with null doing double duty as "Not known" AND
+   * as "nobody has said" — so the form opened with "Not known" already
+   * ticked, and an officer who never reached the question left an answer on
+   * the record they had not given. Now null means only the second thing, and
+   * nothing is ticked until somebody chooses.
+   */
+  const [isOngoing, setIsOngoing] = useState<string | null>(null);
+  const [offenderNearby, setOffenderNearby] = useState<string | null>(null);
+  const [riskLevel, setRiskLevel] = useState("");
+  /* "Other" opens a box: the list cannot anticipate every household. */
+  const [relationshipOther, setRelationshipOther] = useState("");
+  const [channel, setChannel] = useState("");
+  const [needs, setNeeds] = useState<string[]>([]);
+  const [needsOther, setNeedsOther] = useState("");
+
+  /**
+   * A yes/no/not-known answer, as the column holds it.
+   *
+   * "Not known" is null, not false. Sending false would record "he is NOT
+   * near her" when what the officer said was that she could not tell — and
+   * on a risk assessment that is the difference between sending somebody
+   * tonight and not.
+   *
+   * An unanswered question sends nothing at all, so the field is left as it
+   * was rather than overwritten with a guess.
+   */
+  const yesNo = (answer: string | null): boolean | null | undefined => {
+    if (answer === null) return undefined;
+
+    return answer === "unknown" ? null : answer === "yes";
+  };
+
+  const toggleNeed = (need: string) =>
+    setNeeds((prev) => (prev.includes(need) ? prev.filter((n) => n !== need) : [...prev, need]));
+
   const [editForm, setEditForm] = useState({
     violence_type: VIOLENCE_TYPES[0],
     relationship_to_offender: "",
@@ -73,10 +286,15 @@ export default function VawcCasesList() {
   const load = () => {
     setLoading(true);
     api
-      .get("/vawc/cases", { params: { page } })
+      .get("/vawc/cases", { params: { page, ...periodParams(period) } })
       .then((r) => {
         setRows(r.data.data.data ?? []);
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
+        /* The window the server actually resolved, which is not always the
+           one the buttons imply — a month with no year means this year. */
+        setWindowLabel(r.data.data.window?.label ?? null);
+        setYears(r.data.data.years ?? []);
       })
       .finally(() => setLoading(false));
   };
@@ -84,7 +302,14 @@ export default function VawcCasesList() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+  }, [page, period]);
+
+  /* A narrower window almost never has as many pages, and page 4 of a
+     one-page result is an empty docket that looks like no cases at all. */
+  const changePeriod = (next: Period) => {
+    setPeriod(next);
+    setPage(1);
+  };
 
   // Live updates without a manual refresh.
   useAutoRefresh(load, REFRESH.staff);
@@ -92,14 +317,27 @@ export default function VawcCasesList() {
   /** Clears the confidential intake draft — nothing may survive a cancel. */
   const resetIntake = () => {
     setSurvivor(null);
-    setViolenceType(VIOLENCE_TYPES[0]);
+    setViolenceType("");
     setRelationship("");
     setDependents([]);
     setReportedByOther(false);
     setReportedByName("");
     setReportedByRelationship("");
     setReportedByContact("");
-    setImmediateNeeds("");
+    /*
+     * The new boxes clear too. An intake form that opens holding the last
+     * survivor's answers is how one person's incident ends up on another
+     * person's case.
+     */
+    setNeeds([]);
+    setNeedsOther("");
+    setOccurredAt("");
+    setIncidentLocation("");
+    setIsOngoing(null);
+    setOffenderNearby(null);
+    setRelationshipOther("");
+    setRiskLevel("");
+    setChannel("");
     setPreviousIncidents("0");
     setReportedAt(localNow());
     setNarrative("");
@@ -118,12 +356,32 @@ export default function VawcCasesList() {
       await api.post("/vawc/cases", {
         survivor_id: survivor?.id,
         violence_type: violenceType,
-        relationship_to_offender: relationship || undefined,
+        relationship_to_offender:
+          relationship === "Other"
+            ? (relationshipOther.trim() || "Other")
+            : (relationship || undefined),
         dependent_ids: dependents.map((d) => d.id),
         reported_by_name: reportedByOther ? reportedByName || undefined : undefined,
         reported_by_relationship: reportedByOther ? reportedByRelationship || undefined : undefined,
         reported_by_contact: reportedByOther ? reportedByContact || undefined : undefined,
-        immediate_needs: immediateNeeds || undefined,
+        immediate_needs: needs.length ? needs : undefined,
+        immediate_needs_other: needsOther || undefined,
+        /*
+         * A date, no clock. A survivor recalling last Tuesday does not
+         * recall 14:35, and a box asking for one invites a number nobody
+         * stands behind. Midnight is appended so the column stays a datetime.
+         */
+        occurred_at: occurredAt ? occurredAt + " 00:00:00" : undefined,
+        incident_location: incidentLocation || undefined,
+        /*
+         * "Not known" is an answer and is sent as such — as null, which is
+         * what the column holds. Leaving the question unanswered sends
+         * nothing at all.
+         */
+        is_ongoing: yesNo(isOngoing),
+        offender_nearby: yesNo(offenderNearby),
+        risk_level: riskLevel || undefined,
+        reporting_channel: channel || undefined,
         previous_incidents_count: Number(previousIncidents) || 0,
         report_date: reportedAt ? reportedAt.replace("T", " ") + ":00" : undefined,
         incident_narrative: narrative || undefined,
@@ -207,9 +465,9 @@ export default function VawcCasesList() {
           <button
             type="button"
             onClick={() => setIntakeOpen(true)}
-            className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            + Confidential intake
+            <FiPlus className="h-4 w-4" aria-hidden="true" /> Confidential intake
           </button>
         }
       />
@@ -218,6 +476,14 @@ export default function VawcCasesList() {
         <strong>Reminder:</strong> VAWC cases are never mediated at the Lupon.
         Coordinate protective services immediately for high-risk situations.
       </div>
+
+      <PeriodFilter
+        value={period}
+        onChange={changePeriod}
+        years={years}
+        showing={windowLabel}
+        count={total}
+      />
 
       <Card>
         <DataTable
@@ -231,6 +497,16 @@ export default function VawcCasesList() {
               ),
             },
             { header: "Violence Type", render: (c: VawcCase) => c.violence_type },
+            /*
+             * Risk and the next visit, which are what the docket is opened
+             * for. Everything else on this row is filing; these two are the
+             * work.
+             */
+            { header: "Risk", render: (c: VawcCase) => <RiskBadge level={c.risk_level} /> },
+            {
+              header: "Next follow-up",
+              render: (c: VawcCase) => <NextDue on={c.next_followup_date} />,
+            },
             {
               header: "Reported",
               render: (c: VawcCase) => formatWallClock(c.report_date),
@@ -244,32 +520,34 @@ export default function VawcCasesList() {
             {
               header: "Actions",
               render: (c: VawcCase) => (
-                <div className="flex gap-1.5">
-                  <Link
+                <RowActions>
+                  <RowAction
+                    label="Open case"
+                    icon={FiEye}
+                    tone="primary"
                     to={`/vawc/cases/${c.id}`}
-                    className="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-primary-dark"
-                  >
-                    Open
-                  </Link>
-                  <button
-                    type="button"
-                    onClick={() => openEdit(c)}
-                    className="cursor-pointer rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
-                  >
-                    Edit
-                  </button>
-                </div>
+                  />
+                  <RowAction label="Edit case" icon={FiEdit2} onClick={() => openEdit(c)} />
+                </RowActions>
               ),
             },
           ]}
           rows={rows}
           rowKey={(c) => c.id}
+          numbered
+          total={total}
           searchable
           searchPlaceholder="Search by case code…"
-          getSearchText={(c) => `${c.case_code} ${c.violence_type} ${c.status}`}
+          getSearchText={(c) => `${c.case_code} ${c.violence_type} ${c.status} ${c.risk_level ?? ""}`}
           filters={[
             { label: "Status", getValue: (c) => c.status },
             { label: "Violence Type", getValue: (c) => c.violence_type },
+            /*
+             * The docket is opened to find the urgent ones. Cases nobody has
+             * judged group under their own label rather than vanishing — an
+             * unjudged case is not a safe one.
+             */
+            { label: "Risk", getValue: (c) => c.risk_level ?? "Not assessed" },
           ]}
           loading={loading}
           page={page}
@@ -281,6 +559,10 @@ export default function VawcCasesList() {
 
       <Modal open={intakeOpen} onClose={closeIntake} title="Confidential Client Intake" size="xl">
         <form onSubmit={intake} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Band
+            title="A. Survivor and reporter"
+            hint="Who this case is about, and who brought it in."
+          />
           <div className="sm:col-span-2 lg:col-span-3">
             <FormField label="Survivor (resident record)" required plain>
               <ResidentPicker
@@ -329,15 +611,151 @@ export default function VawcCasesList() {
             </div>
           </div>
 
+          <FormField label="How the complaint reached us">
+            <select value={channel} onChange={(e) => setChannel(e.target.value)} className={inputClasses}>
+              <option value="">Not recorded</option>
+              {REPORTING_CHANNELS.map((c) => <option key={c}>{c}</option>)}
+            </select>
+          </FormField>
+
+          <Band
+            title="B. The incident, and how dangerous it is now"
+            hint="Everything above is who. This is what happened — and whether it is still happening."
+          />
+
+          {/*
+            No default. "Physical" sat there pre-chosen, so a form submitted
+            without anybody reading this line recorded physical violence —
+            the commonest kind, which is exactly what makes the wrong answer
+            hard to spot afterwards.
+          */}
           <FormField label="Type of reported violence" required>
-            <select value={violenceType} onChange={(e) => setViolenceType(e.target.value)} className={inputClasses}>
+            <select
+              value={violenceType}
+              onChange={(e) => setViolenceType(e.target.value)}
+              required
+              className={inputClasses}
+            >
+              <option value="">Select type…</option>
               {VIOLENCE_TYPES.map((type) => (
                 <option key={type}>{type}</option>
               ))}
             </select>
           </FormField>
+          {/*
+            When and where it happened — not when it was reported.
+
+            The form recorded only the second. A prescription period runs
+            from the act, and "last night" and "last year" are not the same
+            case to anybody deciding what to do about it.
+          */}
+          {/*
+            A date, no clock. A survivor recalling last Tuesday does not
+            recall 14:35, and a box asking for one invites a number nobody
+            stands behind.
+          */}
+          <FormField label="When did it happen?" hint="The date is enough.">
+            <input
+              type="date"
+              value={occurredAt}
+              max={localNow().slice(0, 10)}
+              onChange={(e) => setOccurredAt(e.target.value)}
+              className={inputClasses}
+            />
+          </FormField>
+
+          <FormField label="Where did it happen?" hint="Stored encrypted">
+            <input
+              value={incidentLocation}
+              onChange={(e) => setIncidentLocation(e.target.value)}
+              className={inputClasses}
+              placeholder="House, street, purok…"
+            />
+          </FormField>
+
+          {/*
+            The two questions the old form never asked, and the only two that
+            are about tonight. An officer reading this decides whether to go
+            now or to schedule a visit.
+          */}
+          {/*
+            The two questions that are about tonight.
+
+            ChoiceGroup rather than hand-rolled buttons, so the chosen answer
+            carries a TICK and not only a shade of colour — and so that
+            nothing is ticked until somebody actually chooses. "Not known" is
+            an answer here, not the absence of one.
+          */}
+          <div className="sm:col-span-2 lg:col-span-3 grid gap-4 sm:grid-cols-2">
+            <ChoiceGroup
+              label="Is the incident still going on?"
+              value={isOngoing}
+              onChange={setIsOngoing}
+              clearable
+              onClear={() => setIsOngoing(null)}
+              options={[
+                { value: "yes", label: "Yes" },
+                { value: "no", label: "No" },
+                { value: "unknown", label: "Not known" },
+              ]}
+            />
+
+            <ChoiceGroup
+              label="Is the alleged offender with or near her now?"
+              value={offenderNearby}
+              onChange={setOffenderNearby}
+              clearable
+              onClear={() => setOffenderNearby(null)}
+              options={[
+                { value: "yes", label: "Yes", hint: "Treat this as immediate danger." },
+                { value: "no", label: "No" },
+                { value: "unknown", label: "Not known" },
+              ]}
+            />
+          </div>
+
+          {/*
+            The officer's own judgement, in words rather than colours. It is
+            the first assessment, not the last: every follow-up re-states it,
+            so the docket shows what was last seen and not what was first
+            assumed.
+          */}
+          <FormField
+            label="Risk level"
+            hint="Your assessment now. Each follow-up updates it."
+          >
+            <select
+              value={riskLevel}
+              onChange={(e) => setRiskLevel(e.target.value)}
+              className={inputClasses}
+            >
+              <option value="">Not assessed yet</option>
+              {RISK_LEVELS.map((level) => <option key={level}>{level}</option>)}
+            </select>
+          </FormField>
           <FormField label="Relationship to alleged offender">
-            <input value={relationship} onChange={(e) => setRelationship(e.target.value)} className={inputClasses} />
+            <select
+              value={relationship}
+              onChange={(e) => setRelationship(e.target.value)}
+              className={inputClasses}
+            >
+              <option value="">Not recorded</option>
+              {OFFENDER_RELATIONSHIPS.map((r) => <option key={r}>{r}</option>)}
+            </select>
+            {/*
+              Only when "Other" is chosen. A box that is always there gets
+              filled in beside a chosen relationship, and the record then
+              carries two answers to one question.
+            */}
+            {relationship === "Other" && (
+              <input
+                value={relationshipOther}
+                onChange={(e) => setRelationshipOther(e.target.value)}
+                placeholder="Say what the relationship is"
+                maxLength={100}
+                className={`${inputClasses} mt-2`}
+              />
+            )}
           </FormField>
           <FormField label="Date and time reported" required>
             <input
@@ -369,16 +787,50 @@ export default function VawcCasesList() {
             />
           </FormField>
 
-          <div>
-            <FormField label="Immediate needs">
-              <input
-                value={immediateNeeds}
-                onChange={(e) => setImmediateNeeds(e.target.value)}
-                className={inputClasses}
-                placeholder="e.g. medical attention, temporary shelter, BPO"
-              />
+          {/*
+            Needs as a list rather than a paragraph.
+
+            Free text could not be counted, so nobody could answer "how many
+            survivors this quarter needed shelter?" — which is the question a
+            barangay budget is built on. "Other" stays, because the need
+            nobody anticipated is exactly the one worth reading.
+          */}
+          <div className="sm:col-span-2 lg:col-span-3">
+            <FormField plain label="Immediate needs" hint="Stored encrypted. Tick all that apply.">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {IMMEDIATE_NEEDS.map((need) => (
+                  <label
+                    key={need}
+                    className="flex cursor-pointer items-center gap-2 rounded-xl border border-gray px-3 py-2 text-sm text-dark transition-colors hover:border-primary"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={needs.includes(need)}
+                      onChange={() => toggleNeed(need)}
+                      className="h-4 w-4 cursor-pointer accent-primary"
+                    />
+                    {need}
+                  </label>
+                ))}
+              </div>
             </FormField>
+
+            <div className="mt-2">
+              <FormField label="Anything else she needs">
+                <input
+                  value={needsOther}
+                  onChange={(e) => setNeedsOther(e.target.value)}
+                  className={inputClasses}
+                  placeholder="Not on the list above"
+                />
+              </FormField>
+            </div>
           </div>
+
+          <Band
+            title="C. Confidential case notes"
+            hint="Encrypted, and visible to VAWC personnel only."
+          />
 
           <div className="grid gap-4 sm:col-span-2 sm:grid-cols-2 lg:col-span-3">
             <FormField label="Incident narrative" hint="Stored encrypted">
@@ -511,11 +963,17 @@ export default function VawcCasesList() {
               />
             </FormField>
           </div>
-          <FormField label="Immediate needs">
-            <input
+          {/*
+            A textarea, because intake now writes one need per line. A
+            single-line input would show the list as one run-on string and
+            save it back that way — quietly destroying what was ticked.
+          */}
+          <FormField label="Immediate needs" hint="One per line.">
+            <textarea
               value={editForm.immediate_needs}
               onChange={(e) => setEdit("immediate_needs", e.target.value)}
-              className={inputClasses}
+              rows={3}
+              className={`${inputClasses} resize-y`}
             />
           </FormField>
           <div className="sm:col-span-2 lg:col-span-3">

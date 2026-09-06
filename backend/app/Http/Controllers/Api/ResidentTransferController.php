@@ -4,7 +4,10 @@ namespace App\Http\Controllers\Api;
 
 use App\Models\Household;
 use App\Models\Resident;
+use App\Models\ResidentMarriage;
 use App\Support\SequenceNumber;
+use App\Support\Xlsx;
+use App\Support\XlsxReader;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -13,9 +16,17 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 /**
  * Getting the register in and out as a spreadsheet.
  *
- * CSV, not xlsx. Every spreadsheet on earth opens it, it survives being
- * emailed and edited by somebody with no software the barangay chose, and a
- * file the office cannot open is not a backup.
+ * CSV by default, Excel on request. CSV is the one every spreadsheet on
+ * earth opens, it survives being emailed and edited by somebody with no
+ * software the barangay chose, and a file the office cannot open is not a
+ * backup — so it stays the default. But a clerk who is going to open this in
+ * Excel and nothing else should not have to answer an import dialogue about
+ * delimiters every time, so .xlsx is there for them.
+ *
+ * One field is the resident's own: occupation. A file may bring one in for
+ * somebody being created — a restore with every job blank is not a restore —
+ * and is ignored for somebody already on the register, because changing that
+ * is the resident's to do from their portal.
  *
  * Two rules the whole thing turns on:
  *
@@ -35,14 +46,24 @@ class ResidentTransferController extends BaseController
      * One list drives the export header, the import parser and the template,
      * so a column can never mean one thing going out and another coming in.
      */
+    /**
+     * Every field the resident form collects, so a file that goes out can
+     * come back in as the same register.
+     *
+     * `demographic_classification` is the exception and is written out for
+     * reading only: it is worked out from the birthdate, so importing it
+     * would let a stale file overrule the arithmetic.
+     */
     private const COLUMNS = [
         'resident_number', 'record_type', 'last_name', 'first_name', 'middle_name',
-        'suffix', 'mother_maiden_name', 'gender', 'birthdate', 'birth_place',
-        'civil_status', 'occupation', 'contact_number', 'email',
+        'suffix', 'mother_maiden_name', 'gender', 'birthdate',
+        'birthdate_is_estimated', 'birth_place',
+        'civil_status', 'spouse_resident_number', 'union_type',
+        'occupation', 'contact_number', 'email',
         'household_number', 'zone_purok', 'address', 'residency_status',
         'length_of_residence_years', 'educational_attainment',
         'demographic_classification', 'life_status', 'date_of_death',
-        'is_active', 'sectors', 'remarks',
+        'life_status_note', 'is_active', 'sectors', 'remarks',
     ];
 
     private function canWrite(): bool
@@ -51,7 +72,7 @@ class ResidentTransferController extends BaseController
     }
 
     /**
-     * The whole register as a CSV download.
+     * The whole register as a download, in whichever of the two formats.
      *
      * Streamed rather than built in memory: a barangay of twenty thousand is
      * a twenty-thousand-row file, and holding it all before sending the
@@ -60,7 +81,13 @@ class ResidentTransferController extends BaseController
      */
     public function export(Request $request): StreamedResponse
     {
-        $query = Resident::with(['household:id,household_number', 'sectors'])
+        $query = Resident::with([
+                'household:id,household_number',
+                'sectors',
+                /* Only the number is written out — an id means nothing to
+                   whoever opens this file somewhere else. */
+                'spouse:id,resident_number',
+            ])
             ->whereNull('merged_into_id')
             ->orderBy('id');
 
@@ -91,9 +118,83 @@ class ResidentTransferController extends BaseController
             $query->whereHas('sectors', fn ($q) => $q->where('sector_type', $request->input('sector')));
         }
 
-        $filename = 'barangay-natumolan-residents-' . now()->format('Y-m-d') . '.csv';
+        $stem = 'barangay-natumolan-residents-' . now()->format('Y-m-d');
 
-        return response()->stream(function () use ($query) {
+        /*
+         * Every open union, in one query, as resident id to its type.
+         *
+         * Both sides of a union are recorded on one row, so each row is read
+         * into the map twice — once for each person in it.
+         */
+        $unionTypes = [];
+
+        foreach (ResidentMarriage::open()->get(['resident_id', 'spouse_id', 'union_type']) as $union) {
+            $unionTypes[$union->resident_id] = $union->union_type;
+            $unionTypes[$union->spouse_id] = $union->union_type;
+        }
+
+        /*
+         * ONE definition of a row, whichever format asked for it. Two copies
+         * of twenty-six columns is two copies that drift, and the day they
+         * do, the CSV and the spreadsheet quietly disagree about what the
+         * register says.
+         */
+        $cells = fn (Resident $r) => [
+            $r->resident_number,
+            $r->record_type,
+            $r->last_name,
+            $r->first_name,
+            $r->middle_name,
+            $r->suffix,
+            $r->mother_maiden_name,
+            $r->gender,
+            $r->birthdate?->toDateString(),
+            /*
+             * A birthdate from the census has no day — it is the end of the
+             * month it was given for. Losing this flag turns an approximate
+             * date into one the register would swear to.
+             */
+            $r->birthdate_is_estimated ? 'Yes' : 'No',
+            $r->birth_place,
+            $r->civil_status,
+            $r->spouse?->resident_number,
+            $unionTypes[$r->id] ?? null,
+            $r->occupation,
+            $r->contact_number,
+            $r->email,
+            $r->household?->household_number,
+            $r->zone_purok,
+            $r->address,
+            $r->residency_status,
+            $r->length_of_residence_years,
+            $r->educational_attainment,
+            $r->demographic_classification,
+            $r->life_status,
+            $r->date_of_death?->toDateString(),
+            $r->life_status_note,
+            $r->is_active ? 'Yes' : 'No',
+            // Semicolons, because a comma inside a CSV cell is a quoting
+            // problem waiting to be mis-parsed by whatever opens this next.
+            $r->sectors->pluck('sector_type')->join('; '),
+            $r->remarks,
+        ];
+
+        if ($request->input('format') === 'xlsx') {
+            return response()->stream(function () use ($query, $cells) {
+                Xlsx::write(self::COLUMNS, function (callable $row) use ($query, $cells) {
+                    $query->chunk(500, function ($residents) use ($row, $cells) {
+                        foreach ($residents as $resident) {
+                            $row($cells($resident));
+                        }
+                    });
+                });
+            }, 200, [
+                'Content-Type' => Xlsx::CONTENT_TYPE,
+                'Content-Disposition' => 'attachment; filename="' . $stem . '.xlsx"',
+            ]);
+        }
+
+        return response()->stream(function () use ($query, $cells) {
             $out = fopen('php://output', 'w');
 
             /*
@@ -106,46 +207,16 @@ class ResidentTransferController extends BaseController
             fwrite($out, "\xEF\xBB\xBF");
             fputcsv($out, self::COLUMNS);
 
-            $query->chunk(500, function ($residents) use ($out) {
-                foreach ($residents as $r) {
-                    fputcsv($out, [
-                        $r->resident_number,
-                        $r->record_type,
-                        $r->last_name,
-                        $r->first_name,
-                        $r->middle_name,
-                        $r->suffix,
-                        $r->mother_maiden_name,
-                        $r->gender,
-                        $r->birthdate?->toDateString(),
-                        $r->birth_place,
-                        $r->civil_status,
-                        $r->occupation,
-                        $r->contact_number,
-                        $r->email,
-                        $r->household?->household_number,
-                        $r->zone_purok,
-                        $r->address,
-                        $r->residency_status,
-                        $r->length_of_residence_years,
-                        $r->educational_attainment,
-                        $r->demographic_classification,
-                        $r->life_status,
-                        $r->date_of_death?->toDateString(),
-                        $r->is_active ? 'Yes' : 'No',
-                        // Semicolons, because a comma inside a CSV cell is
-                        // a quoting problem waiting to be mis-parsed by
-                        // whatever opens this next.
-                        $r->sectors->pluck('sector_type')->join('; '),
-                        $r->remarks,
-                    ]);
+            $query->chunk(500, function ($residents) use ($out, $cells) {
+                foreach ($residents as $resident) {
+                    fputcsv($out, $cells($resident));
                 }
             });
 
             fclose($out);
         }, 200, [
             'Content-Type' => 'text/csv; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+            'Content-Disposition' => 'attachment; filename="' . $stem . '.csv"',
         ]);
     }
 
@@ -164,7 +235,7 @@ class ResidentTransferController extends BaseController
                 'Male', '1992-07-20', 'Tagoloan, Misamis Oriental', 'Married',
                 'Driver', '+63 917 0000000', '', '', 'Purok 1', '', 'Permanent',
                 '20', 'High School Graduate', '', 'Alive', '', 'Yes',
-                'Adult; Farmer / Fisherfolk', '',
+                'Adult; 4Ps Household', '',
             ]);
 
             fclose($out);
@@ -226,11 +297,60 @@ class ResidentTransferController extends BaseController
          * register in a state nobody chose and nobody can describe — worse
          * than the import simply not having happened.
          */
-        DB::transaction(function () use ($parsed, &$created, &$updated, &$skipped) {
+        $households = 0;
+        $couples = 0;
+
+        /* Line number to the resident it became, for the spouse pass below. */
+        $written = [];
+
+        DB::transaction(function () use (
+            $parsed, &$created, &$updated, &$skipped, &$households, &$couples, &$written
+        ) {
+            /*
+             * Households first, and once each.
+             *
+             * Ten members of one new household are ten rows naming the same
+             * number; created row by row that is ten households, nine of them
+             * empty. Made here, every row that names it finds the same one.
+             */
+            $made = [];
+
+            foreach ($parsed['rows'] as $row) {
+                $number = $row['new_household'] ?? null;
+
+                if ($number === null || $row['problems'] !== [] || isset($made[$number])) {
+                    continue;
+                }
+
+                /* firstOrCreate, not create: two imports of the same file must
+                   not leave two households wearing one number. */
+                $household = Household::firstOrCreate(
+                    ['household_number' => $number],
+                    [
+                        'zone_purok' => $row['new_household_details']['zone_purok'] ?? null,
+                        'street_address' => $row['new_household_details']['street_address'] ?? null,
+                        'total_members' => 0,
+                        'notes' => 'Created by an import on ' . now()->toDateString() . '.',
+                    ]
+                );
+
+                $made[$number] = $household->id;
+
+                if ($household->wasRecentlyCreated) {
+                    $households++;
+                }
+            }
+
             foreach ($parsed['rows'] as $row) {
                 if ($row['problems'] !== []) { $skipped++; continue; }
 
                 $values = $row['values'];
+
+                /* A row that named a household not on the register gets the
+                   one just made for it. */
+                if (($row['new_household'] ?? null) !== null) {
+                    $values['household_id'] = $made[$row['new_household']] ?? null;
+                }
                 $sectors = $values['sectors'] ?? [];
                 unset($values['sectors']);
 
@@ -238,15 +358,26 @@ class ResidentTransferController extends BaseController
                     $resident = Resident::find($row['resident_id']);
                     if (!$resident) { $skipped++; continue; }
 
+                    /*
+                     * A resident owns their own occupation, and a file that
+                     * rewrites everybody's is the office editing it — the
+                     * rule going out the back door. It may still be SET on
+                     * somebody being created below, or a register rebuilt
+                     * from a backup would come back with every job blank.
+                     */
+                    unset($values['occupation']);
+
                     // Only what the file actually said — see the class comment.
                     $resident->fill($values)->save();
                     $updated++;
+                    $written[$row['line']] = $resident;
                 } else {
                     $values['resident_number'] = $values['resident_number']
                         ?? SequenceNumber::next('residents', 'resident_number', date('Y') . '-', 6);
 
                     $resident = Resident::create($values);
                     $created++;
+                    $written[$row['line']] = $resident;
                 }
 
                 foreach ($sectors as $sector) {
@@ -256,11 +387,51 @@ class ResidentTransferController extends BaseController
                     );
                 }
             }
+
+            /*
+             * The couples, now that both halves of every one of them exist.
+             *
+             * A spouse named but not in the file and not on the register is
+             * left alone rather than refused: the office may be importing one
+             * purok at a time, and the partner arrives with the next file.
+             */
+            foreach ($parsed['rows'] as $row) {
+                $number = $row['spouse_number'] ?? null;
+
+                if ($number === null || $row['problems'] !== []) {
+                    continue;
+                }
+
+                $person = $written[$row['line']] ?? null;
+                $spouse = Resident::where('resident_number', $number)->first();
+
+                if (! $person || ! $spouse || $person->id === $spouse->id) {
+                    continue;
+                }
+
+                /* Already married to each other — importing the same file
+                   twice must not open a second union for one couple. */
+                if ((int) $person->fresh()->spouse_id === $spouse->id) {
+                    continue;
+                }
+
+                $person->marryTo($spouse, null, $row['union_type'] ?? 'Married');
+                $couples++;
+            }
         });
 
+        /*
+         * Household member counts are kept on the household row, and the
+         * import has just changed who is in several of them.
+         */
+        Household::whereIn('id', Resident::whereNotNull('household_id')->distinct()->pluck('household_id'))
+            ->each(fn (Household $h) => $h->update(['total_members' => $h->residents()->count()]));
+
         return $this->success(
-            compact('created', 'updated', 'skipped'),
+            compact('created', 'updated', 'skipped', 'households', 'couples'),
             $created . ' added, ' . $updated . ' updated'
+                . ($households ? ', ' . $households . ' household(s) created' : '')
+                . ($couples ? ', ' . $couples . ' couple(s) linked' : '')
                 . ($skipped ? ', ' . $skipped . ' skipped' : '') . '.'
         );
     }
@@ -277,18 +448,49 @@ class ResidentTransferController extends BaseController
     private function parse(Request $request): array
     {
         $request->validate([
-            'file' => 'required|file|mimes:csv,txt|max:8192',
+            /*
+             * The office exports in both formats, so it may hand either one
+             * back. `mimes` checks the real content and not the extension —
+             * an .xlsx is a zip, which is what Laravel calls it.
+             */
+            'file' => 'required|file|mimes:csv,txt,xlsx,zip|max:8192',
         ]);
 
-        $handle = fopen($request->file('file')->getRealPath(), 'r');
+        $upload = $request->file('file');
+        $grid = [];
+        $isSpreadsheet = strtolower($upload->getClientOriginalExtension()) === 'xlsx';
 
-        if (!$handle) {
+        if ($isSpreadsheet) {
+            try {
+                $grid = XlsxReader::rows($upload->getRealPath());
+            } catch (\Throwable $failure) {
+                return ['error' => $failure->getMessage()];
+            }
+        }
+
+        $handle = $isSpreadsheet ? null : fopen($upload->getRealPath(), 'r');
+
+        if (! $isSpreadsheet && ! $handle) {
             return ['error' => 'That file could not be opened.'];
         }
 
-        $header = fgetcsv($handle);
+        /*
+         * One reader for both kinds of file, so everything past this point —
+         * the header check, the row plan, the preview — cannot treat a
+         * spreadsheet differently from a CSV.
+         */
+        $at = 0;
+        $nextRow = function () use ($handle, &$grid, &$at, $isSpreadsheet) {
+            if ($isSpreadsheet) {
+                return $at < count($grid) ? $grid[$at++] : false;
+            }
 
-        if (!$header) {
+            return fgetcsv($handle);
+        };
+
+        $header = $nextRow();
+
+        if (! $header) {
             return ['error' => 'The file is empty.'];
         }
 
@@ -308,7 +510,7 @@ class ResidentTransferController extends BaseController
         $rows = [];
         $line = 1;
 
-        while (($data = fgetcsv($handle)) !== false) {
+        while (($data = $nextRow()) !== false) {
             $line++;
 
             // Excel leaves trailing blank lines in almost every saved file.
@@ -323,11 +525,17 @@ class ResidentTransferController extends BaseController
             );
         }
 
-        fclose($handle);
+        if ($handle) {
+            fclose($handle);
+        }
 
         return [
             'rows' => $rows,
             'summary' => [
+                /* Distinct: ten members of one new household is ONE household. */
+                'new_households' => count(array_unique(array_filter(
+                    array_column($rows, 'new_household')
+                ))),
                 'total' => count($rows),
                 'create' => count(array_filter($rows, fn ($r) => $r['action'] === 'create' && !$r['problems'])),
                 'update' => count(array_filter($rows, fn ($r) => $r['action'] === 'update' && !$r['problems'])),
@@ -350,7 +558,7 @@ class ResidentTransferController extends BaseController
 
         foreach (['last_name', 'first_name', 'middle_name', 'suffix', 'mother_maiden_name',
                   'birth_place', 'occupation', 'contact_number', 'email', 'zone_purok',
-                  'address', 'educational_attainment', 'remarks'] as $plain) {
+                  'address', 'educational_attainment', 'life_status_note', 'remarks'] as $plain) {
             if ($get($plain) !== null) { $values[$plain] = $get($plain); }
         }
 
@@ -394,16 +602,33 @@ class ResidentTransferController extends BaseController
             $values['length_of_residence_years'] = (int) $get('length_of_residence_years');
         }
 
+        $yesNo = fn (string $raw) => in_array(strtolower($raw), ['yes', '1', 'true', 'y'], true);
+
         if ($get('is_active') !== null) {
-            $values['is_active'] = in_array(strtolower($get('is_active')), ['yes', '1', 'true', 'y'], true);
+            $values['is_active'] = $yesNo($get('is_active'));
+        }
+
+        if ($get('birthdate_is_estimated') !== null) {
+            $values['birthdate_is_estimated'] = $yesNo($get('birthdate_is_estimated'));
         }
 
         /* ---- the household, by its number ---- */
+        $newHousehold = null;
+
         if ($get('household_number') !== null) {
             $id = $households[$get('household_number')] ?? null;
 
             if ($id === null) {
-                $problems[] = 'Household "' . $get('household_number') . '" is not on the register.';
+                /*
+                 * Not a problem — a household to be made. Refusing the row
+                 * would mean the office has to create the household by hand
+                 * before the file will load, which is the import done twice.
+                 *
+                 * It is named in the plan so the preview can show it, because
+                 * one mistyped number would otherwise found a household of
+                 * one person that nobody meant to exist.
+                 */
+                $newHousehold = $get('household_number');
             } else {
                 $values['household_id'] = $id;
             }
@@ -457,6 +682,23 @@ class ResidentTransferController extends BaseController
             'resident_id' => $existing?->id,
             'matched_number' => $existing?->resident_number,
             'values' => $values,
+            /*
+             * Left for a second pass. Row 1 can name row 2 as their spouse,
+             * and row 2 does not exist yet while row 1 is being read.
+             */
+            'spouse_number' => $get('spouse_resident_number'),
+            'union_type' => $get('union_type') === null
+                ? null
+                : (strcasecmp($get('union_type'), ResidentMarriage::LIVE_IN) === 0
+                    ? ResidentMarriage::LIVE_IN
+                    : 'Married'),
+            /* The household this row would bring into being, if any. */
+            'new_household' => $newHousehold,
+            /* What the household would be given, from this same row. */
+            'new_household_details' => $newHousehold === null ? null : [
+                'zone_purok' => $get('zone_purok'),
+                'street_address' => $get('address'),
+            ],
             'problems' => $problems,
         ];
     }

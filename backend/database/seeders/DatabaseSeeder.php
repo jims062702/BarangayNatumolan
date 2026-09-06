@@ -145,7 +145,7 @@ class DatabaseSeeder extends Seeder
             7 => 'Solo Parent',
             14 => 'Youth', 20 => 'Youth',
             3 => 'Children Under Five', 4 => 'Children Under Five', 8 => 'Children Under Five', 17 => 'Children Under Five',
-            10 => 'Pregnant Women',
+            10 => 'Indigent',
             1 => '4Ps Household',
         ];
         foreach ($sectorMap as $ridx => $sector) {
@@ -308,7 +308,7 @@ class DatabaseSeeder extends Seeder
                 'category' => $category,
                 'location' => $location,
                 'event_at' => $eventAt,
-                'is_published' => true,
+                'status' => 'Published',
                 'published_at' => now()->subDays($i + 2),
                 'created_by' => $pb->id,
             ]);

@@ -228,7 +228,18 @@ export default function ResidentFormFields({
         </select>
       </FormField>
       <FormField label="Occupation">
-        <input value={form.occupation} onChange={set("occupation")} className={inputClasses} />
+<div>
+          <input
+            value={form.occupation || "Not set"}
+            readOnly
+            aria-label="Occupation"
+            className={`${inputClasses} cursor-not-allowed bg-secondary text-gray-400`}
+          />
+          <p className="mt-1 text-xs text-gray-400">
+            The resident sets this from their portal. Nobody at the counter knows what work
+            somebody does better than they do.
+          </p>
+        </div>
       </FormField>
       <FormField label="Contact number" hint="Philippine mobile — 10 digits after +63">
         <PhoneInput

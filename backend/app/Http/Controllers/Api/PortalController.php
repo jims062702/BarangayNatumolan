@@ -6,6 +6,7 @@ use App\Support\SequenceNumber;
 
 use App\Models\Announcement;
 use App\Models\Appointment;
+use App\Models\ChatConversation;
 use App\Models\CertificateClearance;
 use App\Models\Blotter;
 use App\Models\LuponCase;
@@ -14,6 +15,7 @@ use App\Models\ServiceGuide;
 use App\Models\ServiceRequest;
 use App\Http\Controllers\Api\CertificateController;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 /**
  * Resident portal — every endpoint is scoped to the authenticated
@@ -49,7 +51,8 @@ class PortalController extends BaseController
                 ->where('status', '!=', 'Cancelled')
                 ->where('scheduled_datetime', '>=', now())
                 ->orderBy('scheduled_datetime')->limit(5)->get(),
-            'announcements' => Announcement::where('is_published', true)
+            /* An expired advisory is dropped by the scope — see Announcement. */
+            'announcements' => Announcement::public()->with('creator:id,name')
                 ->orderByDesc('published_at')->limit(4)->get(),
         ], 'Portal dashboard retrieved');
     }
@@ -85,6 +88,17 @@ class PortalController extends BaseController
             'service_type' => 'required|string|max:120',
             'purpose' => 'required|string|max:500',
             'office' => 'in:Main Office,Population,Health Station',
+            /*
+             * Present when the request was raised from the chat widget.
+             *
+             * The request itself is identical whichever door it came
+             * through — same record, same pending certificate, same clerk's
+             * worklist — so there is one path and not two. What the token
+             * adds is a line in the conversation, so a Secretary who is in
+             * the middle of helping somebody sees what they just asked for
+             * rather than being told about it later.
+             */
+            'session_token' => 'nullable|string|size:48',
         ]);
 
         $serviceRequest = ServiceRequest::create([
@@ -104,6 +118,24 @@ class PortalController extends BaseController
          * the clerk simply accepts it and starts.
          */
         $certificate = $this->raisePendingCertificate($serviceRequest);
+
+        /*
+         * If it came from a live conversation, say so in the conversation.
+         * Best-effort: the request is already made, and a chat that cannot
+         * be written to is not a reason to fail it.
+         */
+        if (!empty($validated['session_token'])) {
+            $conversation = ChatConversation::where('session_token', $validated['session_token'])
+                ->where('resident_id', $this->residentId())
+                ->whereIn('status', ['Waiting', 'Active'])
+                ->first();
+
+            $conversation?->addMessage(
+                'system',
+                'Request ' . $serviceRequest->request_number . ' — '
+                    . $serviceRequest->service_type . ' — was raised from this chat.'
+            );
+        }
 
         // Ping the front desk so the clerk sees (and hears) the new request.
         $residentName = $serviceRequest->resident?->full_name ?? 'A resident';
@@ -261,7 +293,46 @@ class PortalController extends BaseController
     {
         $user = auth()->user()->load(['resident.household']);
 
-        return $this->success($user, 'Profile retrieved');
+        return $this->success(
+            /*
+             * The list travels with the profile rather than from a second
+             * call: the page cannot render the one editable field without
+             * it, and two requests for one screen is two chances for it to
+             * arrive half-drawn.
+             */
+            ['user' => $user, 'occupations' => Resident::OCCUPATIONS],
+            'Profile retrieved'
+        );
+    }
+
+    /**
+     * The resident says what work they do.
+     *
+     * The only field in the registry a resident may change about themselves.
+     * From a fixed list, because the barangay counts these: "Carpenter",
+     * "carpenter" and "Karpentero" typed into an open box are three
+     * occupations to a report and one job to everybody else.
+     */
+    public function updateOccupation(Request $request)
+    {
+        $resident = auth()->user()?->resident;
+
+        if (! $resident) {
+            return $this->error('This account is not linked to a resident record.', 404);
+        }
+
+        $validated = $request->validate([
+            'occupation' => ['required', 'string', Rule::in(Resident::OCCUPATIONS)],
+        ], [
+            'occupation.in' => 'Choose one of the listed occupations.',
+        ]);
+
+        $resident->forceFill(['occupation' => $validated['occupation']])->save();
+
+        return $this->success(
+            ['occupation' => $resident->occupation],
+            'Your occupation has been updated.'
+        );
     }
 
     /**

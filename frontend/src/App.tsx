@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { AppShellSkeleton } from "./components/UI/Skeleton";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -30,19 +31,17 @@ const PortalProfile = lazy(() => import("./pages/portal/PortalProfile"));
 
 // Shared core (staff)
 const PortalCases = lazy(() => import("./pages/portal/PortalCases"));
-const BlotterList = lazy(() => import("./pages/services/BlotterList"));
 const ResidentList = lazy(() => import("./pages/residents/ResidentList"));
 const NonResidentList = lazy(() => import("./pages/residents/NonResidentList"));
 const ResidentCreate = lazy(() => import("./pages/residents/ResidentCreate"));
 const ResidentDetail = lazy(() => import("./pages/residents/ResidentDetail"));
 const ResidentEdit = lazy(() => import("./pages/residents/ResidentEdit"));
 const ServiceRequestList = lazy(() => import("./pages/services/ServiceRequestList"));
-const QueueBoard = lazy(() => import("./pages/services/QueueBoard"));
 const CertificateList = lazy(() => import("./pages/services/CertificateList"));
+const CertificateReport = lazy(() => import("./pages/services/CertificateReport"));
 const LiveChat = lazy(() => import("./pages/chat/LiveChat"));
 const AppointmentScheduler = lazy(() => import("./pages/appointments/AppointmentScheduler"));
-const ReferralList = lazy(() => import("./pages/referrals/ReferralList"));
-const ReportsAnalytics = lazy(() => import("./pages/reports/ReportsAnalytics"));
+const BarangaySessions = lazy(() => import("./pages/sessions/BarangaySessions"));
 
 // VAWC Office
 const VawcCasesList = lazy(() => import("./pages/vawc/VawcCasesList"));
@@ -80,19 +79,16 @@ const SkOfficials = lazy(() => import("./pages/sk/SkOfficials"));
 // Management / Admin
 const AdministrativeRecords = lazy(() => import("./pages/records/AdministrativeRecords"));
 const AnnouncementsManage = lazy(() => import("./pages/manage/AnnouncementsManage"));
-const ServiceGuidesManage = lazy(() => import("./pages/manage/ServiceGuidesManage"));
 const UserManagement = lazy(() => import("./pages/admin/UserManagement"));
 
-/** Brand spinner shown for the instant a lazy page chunk downloads. */
+/**
+ * What a page chunk downloads behind.
+ *
+ * The same shell the session check shows, so the two waits look like one
+ * page loading rather than two different loading screens in a row.
+ */
 function PageLoader() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-secondary">
-      <div
-        aria-label="Loading"
-        className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent"
-      />
-    </div>
-  );
+  return <AppShellSkeleton />;
 }
 
 export default function App() {
@@ -217,8 +213,6 @@ export default function App() {
             }
           >
             <Route path="/services" element={<ServiceRequestList />} />
-            <Route path="/queue" element={<QueueBoard />} />
-            <Route path="/blotter" element={<BlotterList />} />
           </Route>
 
           {/* Appointments sit behind the front desk but not with the Clerk,
@@ -236,6 +230,8 @@ export default function App() {
             }
           >
             <Route path="/appointments" element={<AppointmentScheduler />} />
+            {/* The secretary's own record, which the PB reads and adopts. */}
+            <Route path="/sessions" element={<BarangaySessions />} />
           </Route>
 
           {/* Certificates & clearances — the clerk runs the counter end to
@@ -252,6 +248,7 @@ export default function App() {
             }
           >
             <Route path="/certificates" element={<CertificateList />} />
+            <Route path="/certificates/report" element={<CertificateReport />} />
           </Route>
 
           {/* Live chat desk — the Secretary answers the website's chat widget.
@@ -289,8 +286,6 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route path="/referrals" element={<ReferralList />} />
-            <Route path="/reports" element={<ReportsAnalytics />} />
           </Route>
 
           {/* VAWC Office — isolated */}
@@ -323,9 +318,30 @@ export default function App() {
           >
             <Route path="/lupon/cases" element={<LuponCasesList />} />
             <Route path="/lupon/cases/:id" element={<LuponCaseDetail />} />
-            <Route path="/lupon/hearings" element={<LuponHearings />} />
             <Route path="/lupon/settlements" element={<LuponSettlements />} />
             <Route path="/lupon/reports" element={<LuponReports />} />
+          </Route>
+
+          {/*
+            The hearing calendar, and only that.
+
+            The barangay secretary takes the minutes at a mediation, so they
+            reach the hearings without being given the docket behind them —
+            which is why this is its own guard rather than a wider Lupon one.
+          */}
+          <Route
+            element={
+              <ProtectedRoute
+                staffOnly
+                allowedOffices={["Lupon", "Main Office", "Admin"]}
+                allowedRoles={["Punong Barangay", "Admin"]}
+                deniedRoles={["Clerk"]}
+              >
+                <DashboardLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route path="/lupon/hearings" element={<LuponHearings />} />
           </Route>
 
           {/* Population Office */}
@@ -393,7 +409,6 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route path="/manage/service-guides" element={<ServiceGuidesManage />} />
             <Route path="/records" element={<AdministrativeRecords />} />
           </Route>
 

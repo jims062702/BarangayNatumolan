@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { FiPlus } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
@@ -16,6 +17,8 @@ export default function PatientVisits() {
   const [date, setDate] = useState("");
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -36,6 +39,7 @@ export default function PatientVisits() {
       .then((r) => {
         setRows(r.data.data.data ?? []);
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
       })
       .finally(() => setLoading(false));
   };
@@ -83,9 +87,9 @@ export default function PatientVisits() {
           <button
             type="button"
             onClick={() => setCreateOpen(true)}
-            className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            + Record visit
+            <FiPlus className="h-4 w-4" aria-hidden="true" /> Record visit
           </button>
         }
       />
@@ -131,6 +135,8 @@ export default function PatientVisits() {
           ]}
           rows={rows}
           rowKey={(v) => v.id}
+          numbered
+          total={total}
           searchable
           searchPlaceholder="Search by patient or reason…"
           getSearchText={(v) =>

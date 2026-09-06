@@ -11,6 +11,7 @@ import Card from "../../components/UI/Card";
 import PageHeader from "../../components/UI/PageHeader";
 import StatusBadge from "../../components/UI/StatusBadge";
 import FormField, { inputClasses } from "../../components/UI/FormField";
+import PhoneInput from "../../components/UI/PhoneInput";
 import Modal from "../../components/UI/Modal";
 import type { Resident } from "../../types";
 
@@ -68,6 +69,16 @@ interface HouseCheck {
   }[];
 }
 
+/** Anything a household-level box can hold, lists included. */
+type FormValue = string | number | boolean | null | string[] | DeathRow[];
+
+/** One death on the Q54 or Q55 list. Ages are typed, so they stay strings. */
+interface DeathRow {
+  age?: string | null;
+  sex?: string | null;
+  cause?: string | null;
+}
+
 interface Member {
   [key: string]: string | number | null | undefined;
   last_name: string;
@@ -112,6 +123,14 @@ const SKIPPED = "99";
  */
 const PUROKS = ["Purok 1", "Purok 2", "Purok 3", "Purok 4", "Purok 5"];
 
+/**
+ * What Q32 fills in when the tick says "registered here".
+ *
+ * Spelled once. Ten lines typing it by hand is ten chances to spell it
+ * differently, and a search for voters in this barangay finds nine of them.
+ */
+const VOTER_HERE = "Barangay Natumolan";
+
 const HOME = {
   province: "Misamis Oriental",
   city_municipality: "Tagoloan",
@@ -126,6 +145,121 @@ const HOME = {
  * — and a table of magic numbers here would drift from the model that owns
  * them.
  */
+/**
+ * A whole number, capped by the code rather than by the browser.
+ *
+ * `maxLength` does nothing at all on `<input type="number">` — which is why
+ * a three-digit age box happily took seven digits. So numeric boxes are text
+ * boxes in numeric mode, and the cap is applied where it can be trusted.
+ */
+function onlyDigits(raw: unknown, cap: number): string {
+  return String(raw ?? "").replace(/\D/g, "").slice(0, cap);
+}
+
+/** 5000 into 5,000. Below a thousand there is nothing to group. */
+function groupThousands(raw: unknown): string {
+  // A decimal column reads back as "5000.00"; the pesos are what was typed.
+  const whole = String(raw ?? "").split(".")[0].replace(/\D/g, "");
+
+  return whole === "" ? "" : whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/** MM/YYYY, with the slash put in as it is typed. */
+function maskMonthYear(raw: string): string {
+  const only = raw.replace(/\D/g, "").slice(0, 6);
+
+  return only.length <= 2 ? only : `${only.slice(0, 2)}/${only.slice(2)}`;
+}
+
+/** Two columns — a month and a year — read as one box. */
+function joinMonthYear(month: unknown, year: unknown): string {
+  const m = month === null || month === undefined || month === "" ? "" : String(month);
+  const y = year === null || year === undefined || year === "" ? "" : String(year);
+
+  if (!m && !y) return "";
+  if (!y) return m.padStart(2, "0");
+
+  return `${m.padStart(2, "0")}/${y}`;
+}
+
+function splitMonthYear(text: string): { month: string; year: string } {
+  const only = text.replace(/\D/g, "");
+  const month = only.slice(0, 2);
+
+  return {
+    // A month of 00 is nobody's month; it is half of a keystroke.
+    month: month === "" || Number(month) === 0 ? "" : String(Number(month)),
+    year: only.slice(2, 6),
+  };
+}
+
+/**
+ * Q16 says the income did not come from work, so Q17 and Q18 are skipped.
+ *
+ * Remittance, investments and "others" are money without a job — the paper
+ * sends all three straight to Q19. The three codes are named because the
+ * paper names them; this list is fixed by the form, not by us.
+ */
+function skipsToQ19(member: Member): boolean {
+  return ["3", "4", "5"].includes(String(member.q16_income_source ?? ""));
+}
+
+/**
+ * Q36, which the paper says to work out rather than ask.
+ *
+ *   Non-migrant  Q33 and Q34 are both this barangay.
+ *   Migrant      either is somewhere else, and Q35 is at least six months
+ *                and one day.
+ *   Transient    either is somewhere else, and Q35 is under six months.
+ *
+ * The two residences are free text, so "this barangay" is read by name.
+ * Anything the form cannot decide it leaves alone — a wrong code here sends
+ * eight migration questions to 99 for somebody who should have answered
+ * them, which is worse than an empty box.
+ */
+function residentTypeFrom(member: Member): string | null {
+  const five = String(member.q33_residence_5yrs ?? "").trim();
+  const six = String(member.q34_residence_6mos ?? "").trim();
+
+  if (!five || !six) return null;
+
+  const here = (place: string) =>
+    new RegExp(HOME.barangay, "i").test(place.replace(/[^A-Za-z0-9 ]/g, " "));
+
+  if (here(five) && here(six)) return "1";
+
+  const years = Number(member.q35_stay_years ?? 0) || 0;
+  const months = Number(member.q35_stay_months ?? 0) || 0;
+
+  if (!member.q35_stay_years && !member.q35_stay_months) return null;
+
+  // "At least six months and one day" — six months exactly is still transient.
+  return years * 12 + months > 6 ? "2" : "3";
+}
+
+/** Q36 says non-migrant, so Q37 to Q41 are not asked of this person. */
+function isNonMigrant(member: Member): boolean {
+  return String(member.q36_resident_type ?? residentTypeFrom(member) ?? "") === "1";
+}
+
+/**
+ * A code already used in the A box cannot be the answer in B as well.
+ *
+ * Q38 and Q40 each ask for up to three DIFFERENT reasons. Offering the same
+ * fifteen in all three boxes is how a form comes back saying somebody left
+ * for lack of employment, lack of employment, and lack of employment.
+ */
+function without(
+  list: Record<string, string> | undefined,
+  taken: (string | number | null | undefined)[]
+): Record<string, string> {
+  const used = taken.filter((v) => v !== null && v !== undefined && v !== "").map(String);
+
+  return Object.fromEntries(
+    Object.entries(list ?? {}).filter(([code]) => !used.includes(code))
+  );
+}
+
 function isOther(value: unknown, list?: Record<string, string>): boolean {
   if (value === null || value === undefined || value === "") return false;
 
@@ -277,6 +411,29 @@ function inBand(age: unknown, min: number, max?: number): boolean {
 }
 
 /**
+ * How old this line is, as the form should read it.
+ *
+ * Q5 first, always: a month and a year is what the census collects, and Q4
+ * is that arithmetic — which is why Q4 goes read-only the moment Q5 is
+ * answered. A read-only box has no onChange, so `q4_age` is never written to
+ * state, and every band that asked the box was asking an empty value.
+ *
+ * The typed number is still the fallback, for a line where the office knows
+ * the age and not the birth month.
+ */
+function ageOf(member: Member): number | null {
+  const derived = ageFromMonthYear(member.q5_birth_month, member.q5_birth_year);
+  if (derived !== null) return derived;
+
+  const typed = member.q4_age;
+  if (typed === null || typed === undefined || typed === "") return null;
+
+  const n = Number(typed);
+
+  return Number.isNaN(n) ? null : n;
+}
+
+/**
  * Family planning is asked of women 10 to 54.
  *
  * An unanswered Q3 counts as applicable. Hiding a whole section because one
@@ -306,7 +463,7 @@ function maybeWoman(member: Member, sexes?: Record<string, string>): boolean {
  * An unanswered Q12 leaves them open. A blank box is not a No.
  */
 function schoolDetailsApply(member: Member): boolean {
-  if (outOfBand(member.q4_age, 3)) return false;
+  if (outOfBand(ageOf(member), 3)) return false;
 
   const enrolled = String(member.q12_enrolled ?? "");
 
@@ -429,6 +586,69 @@ function Choice({
 }
 
 /**
+ * How many characters are left in a box.
+ *
+ * A cap the browser enforces on its own is the quietest failure on the form:
+ * the letters simply stop appearing. Nothing is flagged, nothing is wrong to
+ * look at, and the address that gets saved is cut off in the middle with
+ * nobody the wiser.
+ *
+ * Shown only once there is something typed — thirty boxes each announcing
+ * "80 characters left" over an empty form is noise — and only on boxes long
+ * enough for the number to be worth reading. A middle initial does not need
+ * a countdown.
+ *
+ * Deliberately NOT a live region. It changes on every keystroke, and a screen
+ * reader announcing a new number after each letter is unusable; the input
+ * carries its own maxLength, which is what assistive software reads.
+ */
+function charsLeft(
+  value: unknown,
+  max?: number
+): { text: string; tone: "quiet" | "tight" | "full" } | null {
+  /* Too short for a countdown to be worth reading. A middle initial does not
+     need one, and neither does a two-digit month. */
+  if (!max || max < 20) return null;
+
+  const used = String(value ?? "").length;
+
+  /* Nothing typed, nothing to say. Thirty boxes each announcing "80
+     characters left" over an empty form is noise, not help. */
+  if (used === 0) return null;
+
+  const left = max - used;
+
+  if (left <= 0) {
+    return { text: `Full — ${max} characters is the most this box takes`, tone: "full" };
+  }
+
+  /* Tight is the last fifth, or the last ten — whichever is more room. */
+  const tight = Math.max(10, Math.round(max * 0.2));
+
+  return {
+    text: `${left} character${left === 1 ? "" : "s"} left`,
+    tone: left <= tight ? "tight" : "quiet",
+  };
+}
+
+const CHARS_LEFT_TONE = {
+  quiet: "text-gray-400",
+  tight: "font-medium text-amber-700",
+  full: "font-semibold text-danger",
+} as const;
+
+function CharsLeft({ value, max }: { value: unknown; max?: number }) {
+  const said = charsLeft(value, max);
+  if (!said) return null;
+
+  return (
+    <span className={`mt-1 block text-right text-[11px] ${CHARS_LEFT_TONE[said.tone]}`}>
+      {said.text}
+    </span>
+  );
+}
+
+/**
  * A text box that can be switched off.
  *
  * Two cases need that, and they are the same case: a box whose question does
@@ -449,6 +669,10 @@ function Text({
   maxLength,
   uppercase = false,
   readOnly = false,
+  digits,
+  max,
+  money = false,
+  prefix,
 }: {
   label: string;
   value: string | number | null | undefined;
@@ -468,30 +692,374 @@ function Text({
    * required-check, and these still have to be filled.
    */
   readOnly?: boolean;
+  /** Digits only, and no more than this many of them. */
+  digits?: number;
+  /** The largest value the box will accept — 11 months, 12 pregnancies. */
+  max?: number;
+  /** Grouped in thousands as it is typed; bare digits are what is stored. */
+  money?: boolean;
+  /** Fixed text inside the field, ahead of the value — "+63", "₱". */
+  prefix?: string;
 }) {
+  /*
+    A number box is a text box in numeric mode.
+
+    `type="number"` was the obvious choice and the wrong one: the browser
+    ignores maxLength on it entirely, which is why a three-digit age box took
+    seven digits happily. Its spinner arrows are a nuisance on a grid this
+    dense, and a stray scroll over a focused one changes the value.
+  */
+  const numeric = digits !== undefined || money;
+
+  const shown = disabled ? "" : money ? groupThousands(value) : (value ?? "");
+
+  const handle = (raw: string) => {
+    if (!numeric) {
+      onChange(uppercase ? raw.toUpperCase() : raw);
+      return;
+    }
+
+    const only = onlyDigits(raw, digits ?? 12);
+
+    // Out of range is REJECTED, not clamped: typing 12 into a 0-11 box
+    // leaves the 1 that was already there rather than silently becoming 11.
+    if (only !== "" && max !== undefined && Number(only) > max) return;
+
+    onChange(only);
+  };
+
   return (
     <FormField label={label} hint={disabled ? (disabledNote ?? hint) : hint} required={required}>
-      <input
-        type={type}
-        value={disabled ? "" : (value ?? "")}
-        maxLength={maxLength}
-        onChange={(e) => onChange(uppercase ? e.target.value.toUpperCase() : e.target.value)}
-        placeholder={disabled ? "" : placeholder}
-        required={required && !disabled}
-        disabled={disabled}
-        readOnly={readOnly}
-        /*
-          One look for every box that cannot be typed in.
+      <span className="relative block">
+        {prefix && !disabled && (
+          <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-sm font-medium text-gray-500">
+            {prefix}
+          </span>
+        )}
+        <input
+          type={numeric ? "text" : type}
+          inputMode={numeric ? "numeric" : undefined}
+          value={shown}
+          maxLength={money ? undefined : maxLength}
+          onChange={(e) => handle(e.target.value)}
+          placeholder={disabled ? "" : placeholder}
+          required={required && !disabled}
+          disabled={disabled}
+          readOnly={readOnly}
+          style={prefix ? { paddingLeft: 14 + prefix.length * 9 } : undefined}
+          /*
+            One look for every box that cannot be typed in.
 
-          Disabled and read-only are different to the browser and identical
-          to the person: both mean "not yours to change here". Two shades of
-          grey for one meaning just makes the clerk wonder which is which.
-        */
+            Disabled and read-only are different to the browser and identical
+            to the person: both mean "not yours to change here". Two shades of
+            grey for one meaning just makes the clerk wonder which is which.
+          */
+          className={`${inputClasses} ${
+            disabled || readOnly ? "cursor-not-allowed bg-secondary text-gray-400" : ""
+          }`}
+        />
+      </span>
+
+      {/* A box nobody can type in cannot run out of room. */}
+      {!disabled && !readOnly && <CharsLeft value={value} max={money ? undefined : maxLength} />}
+    </FormField>
+  );
+}
+
+/**
+ * A month and a year, and nothing finer.
+ *
+ * The paper asks for exactly that - "write the month in the upper triangle
+ * and the year in the lower" - and asking for a day the household was never
+ * asked invents a fact. Two boxes side by side let the year be filled and the
+ * month forgotten; one box cannot half-answer.
+ */
+function MonthYear({
+  label,
+  value,
+  onChange,
+  hint,
+  disabled = false,
+  disabledNote,
+  skipped = false,
+  skippedNote,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  hint?: string;
+  disabled?: boolean;
+  disabledNote?: string;
+  /** Shows the form's own 99 rather than a blank, for a question not asked. */
+  skipped?: boolean;
+  skippedNote?: string;
+}) {
+  const off = disabled || skipped;
+  const complete = /^(0[1-9]|1[0-2])\/\d{4}$/.test(value);
+  const wrong = !off && value !== "" && !complete;
+
+  return (
+    <FormField
+      label={label}
+      hint={
+        skipped
+          ? (skippedNote ?? "99 - not asked.")
+          : disabled
+            ? (disabledNote ?? hint)
+            : wrong
+              ? "Month and year - 03/2024. The month is 01 to 12."
+              : hint
+      }
+    >
+      <input
+        type="text"
+        inputMode="numeric"
+        placeholder={off ? "" : "MM/YYYY"}
+        maxLength={7}
+        value={skipped ? SKIPPED : off ? "" : value}
+        disabled={off}
+        onChange={(e) => onChange(maskMonthYear(e.target.value))}
         className={`${inputClasses} ${
-          disabled || readOnly ? "cursor-not-allowed bg-secondary text-gray-400" : ""
-        }`}
+          off ? "cursor-not-allowed bg-secondary text-gray-400" : ""
+        } ${wrong ? "border-warning" : ""}`}
       />
     </FormField>
+  );
+}
+
+/**
+ * Q32, where the answer is nearly always this barangay.
+ *
+ * Typing "Barangay Natumolan" onto every one of ten lines is ten chances to
+ * spell it differently, and the tenth is the one that fails a search later.
+ * The tick fills it; unticked, the box is open for somebody registered
+ * elsewhere. Unticked is the default, because a form that assumes an answer
+ * is a form that collects assumptions.
+ */
+function VoterField({
+  value,
+  onChange,
+  disabled = false,
+  disabledNote,
+}: {
+  value: string | number | null | undefined;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+  disabledNote?: string;
+}) {
+  const here = String(value ?? "") === VOTER_HERE;
+
+  return (
+    <FormField
+      plain
+      label="Q32 Registered voter in"
+      hint={disabled ? disabledNote : "15 and above - the barangay they are registered in."}
+    >
+      <input
+        type="text"
+        maxLength={30}
+        value={disabled ? "" : (value ?? "")}
+        readOnly={here}
+        disabled={disabled}
+        placeholder={disabled ? "" : "Barangay and municipality"}
+        onChange={(e) => onChange(e.target.value)}
+        className={`${inputClasses} ${
+          disabled || here ? "cursor-not-allowed bg-secondary text-gray-400" : ""
+        }`}
+      />
+
+      <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-gray-500">
+        <input
+          type="checkbox"
+          checked={here}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.checked ? VOTER_HERE : "")}
+          className="h-4 w-4 cursor-pointer rounded border-gray text-primary focus:ring-primary/30"
+        />
+        Registered here in {VOTER_HERE}
+      </label>
+
+      {!disabled && !here && <CharsLeft value={value} max={30} />}
+    </FormField>
+  );
+}
+
+/**
+ * A question the paper gives three blanks and life sometimes gives more.
+ *
+ * Q56 and Q57 are printed with three lines each. Three is what fits on the
+ * page, not what a household has to say, so rows are added as they are needed
+ * and the empty ones are never sent.
+ */
+function StringList({
+  label,
+  hint,
+  placeholder,
+  values,
+  onChange,
+  addLabel,
+}: {
+  label: string;
+  hint?: string;
+  placeholder?: string;
+  values: string[];
+  onChange: (next: string[]) => void;
+  addLabel: string;
+}) {
+  const rows = values.length ? values : [""];
+
+  return (
+    <div className="sm:col-span-2 lg:col-span-3">
+      <p className="mb-1.5 text-sm font-medium text-dark">{label}</p>
+      {hint && <p className="mb-2 text-xs text-gray-400">{hint}</p>}
+
+      <div className="space-y-2">
+        {rows.map((one, i) => (
+          <div key={i} className="flex items-start gap-2">
+            <span className="mt-3 w-5 shrink-0 text-xs font-semibold text-gray-400">{i + 1}.</span>
+            <span className="min-w-0 flex-1">
+              <input
+                type="text"
+                maxLength={80}
+                value={one}
+                placeholder={placeholder}
+                onChange={(e) => onChange(rows.map((old, j) => (j === i ? e.target.value : old)))}
+                className={inputClasses}
+              />
+              <CharsLeft value={one} max={80} />
+            </span>
+            {rows.length > 1 && (
+              <button
+                type="button"
+                onClick={() => onChange(rows.filter((_, j) => j !== i))}
+                aria-label={`Remove line ${i + 1}`}
+                className="mt-1.5 shrink-0 cursor-pointer rounded-lg p-2 text-gray-400 transition-colors hover:bg-danger/10 hover:text-danger"
+              >
+                <FiX className="h-4 w-4" aria-hidden="true" />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        onClick={() => onChange([...rows, ""])}
+        className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary/10"
+      >
+        <FiPlus className="h-3.5 w-3.5" aria-hidden="true" />
+        {addLabel}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Q54 and Q55 - deaths in the household in the past twelve months.
+ *
+ * The paper has room for one of each, and a household that lost two people
+ * had nowhere to say so. Recorded as one, the second death simply never
+ * happened as far as the barangay's own figures are concerned - and these are
+ * the figures a maternal or under-five death is noticed in.
+ */
+function DeathList({
+  label,
+  hint,
+  rows,
+  onChange,
+  addLabel,
+  maxAge,
+  sexes,
+}: {
+  label: string;
+  hint?: string;
+  rows: DeathRow[];
+  onChange: (next: DeathRow[]) => void;
+  addLabel: string;
+  maxAge: number;
+  /** Only Q55 asks the sex; Q54 is about a woman by definition. */
+  sexes?: Record<string, string>;
+}) {
+  const at = (i: number, patch: Partial<DeathRow>) =>
+    onChange(rows.map((row, j) => (j === i ? { ...row, ...patch } : row)));
+
+  return (
+    <div className="sm:col-span-2 lg:col-span-3">
+      <p className="mb-1.5 text-sm font-medium text-dark">{label}</p>
+      {hint && <p className="mb-2 text-xs text-gray-400">{hint}</p>}
+
+      {rows.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-gray px-3 py-3 text-xs text-gray-400">
+          None reported.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2">
+              <span className="w-5 shrink-0 text-xs font-semibold text-gray-400">{i + 1}.</span>
+
+              <input
+                type="text"
+                inputMode="numeric"
+                placeholder="Age"
+                value={row.age ?? ""}
+                onChange={(e) => {
+                  const only = onlyDigits(e.target.value, 3);
+                  if (only !== "" && Number(only) > maxAge) return;
+                  at(i, { age: only });
+                }}
+                className={`${inputClasses} w-20 shrink-0`}
+              />
+
+              {sexes && (
+                <select
+                  value={row.sex ?? ""}
+                  onChange={(e) => at(i, { sex: e.target.value })}
+                  className={`${inputClasses} w-32 shrink-0`}
+                >
+                  <option value="">Sex</option>
+                  {Object.entries(sexes).map(([code, text]) => (
+                    <option key={code} value={code}>
+                      {code} · {text}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              <span className="min-w-40 flex-1">
+                <input
+                  type="text"
+                  maxLength={80}
+                  placeholder="Cause of death"
+                  value={row.cause ?? ""}
+                  onChange={(e) => at(i, { cause: e.target.value })}
+                  className={inputClasses}
+                />
+                <CharsLeft value={row.cause} max={80} />
+              </span>
+
+              <button
+                type="button"
+                onClick={() => onChange(rows.filter((_, j) => j !== i))}
+                aria-label={`Remove line ${i + 1}`}
+                className="shrink-0 cursor-pointer rounded-lg p-2 text-gray-400 transition-colors hover:bg-danger/10 hover:text-danger"
+              >
+                <FiX className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => onChange([...rows, { age: "", cause: "" }])}
+        className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary/10"
+      >
+        <FiPlus className="h-3.5 w-3.5" aria-hidden="true" />
+        {addLabel}
+      </button>
+    </div>
   );
 }
 
@@ -575,6 +1143,7 @@ function EmailField({
       >
         <input
           type="email"
+          maxLength={80}
           value={String(value ?? "")}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
@@ -584,6 +1153,13 @@ function EmailField({
             bad ? "border-red-400" : "",
           ].join(" ")}
         />
+
+        {/*
+          The costliest box on the form to truncate quietly: an address cut
+          short still looks like an address, and the portal account is issued
+          against it.
+        */}
+        {!disabled && <CharsLeft value={value} max={80} />}
       </FormField>
 
       {onFormClash ? (
@@ -725,7 +1301,7 @@ export default function RbimForm() {
     member: {},
     household: {},
   });
-  const [form, setForm] = useState<Record<string, string | number | boolean | null>>({
+  const [form, setForm] = useState<Record<string, FormValue>>({
     household_head_name: "",
     ...HOME,
     is_institutional: false,
@@ -839,8 +1415,21 @@ export default function RbimForm() {
       .finally(() => setLoading(false));
   }, [editing, id]);
 
-  const set = (key: string, value: string | number | boolean | null) =>
+  const set = (key: string, value: FormValue) =>
     setForm((prev) => ({ ...prev, [key]: value }));
+
+  /*
+   * A list answer, read back safely.
+   *
+   * An older form saved before Q54–Q57 became lists holds nothing at all
+   * under these keys, and a form loaded from the server holds whatever the
+   * JSON column had. Neither is allowed to reach a .map().
+   */
+  const listOf = <T,>(key: string): T[] => (Array.isArray(form[key]) ? (form[key] as T[]) : []);
+
+  /* An empty list is no answer, and no answer is null — not [] . */
+  const setList = (key: string, next: string[] | DeathRow[]) =>
+    set(key, next.length ? next : null);
 
   /**
    * Puts the head's name on line 1.
@@ -938,6 +1527,32 @@ export default function RbimForm() {
            "reviewer", "household", "status", "members_count",
            "submitted_at", "reviewed_at", "reviewed_by", "recorded_by",
            "rbim_census_id", "resident_id"].includes(k)) return;
+      /*
+       * A list answer — Q54 to Q57 — with its blank rows left behind.
+       *
+       * The lists always show one empty row to type into, and that row must
+       * not travel: a household that named two diseases would otherwise be
+       * recorded as naming three, the third being "". An emptied list is
+       * sent as null rather than dropped, because a dropped key leaves the
+       * old answer standing on the server.
+       */
+      if (Array.isArray(v)) {
+        const rows = (v as unknown[])
+          .map((row) =>
+            typeof row === "string"
+              ? row.trim()
+              : Object.fromEntries(
+                  Object.entries((row ?? {}) as Record<string, unknown>).filter(
+                    ([, cell]) => String(cell ?? "").trim() !== ""
+                  )
+                )
+          )
+          .filter((row) => (typeof row === "string" ? row !== "" : Object.keys(row).length > 0));
+
+        out[k] = rows.length ? rows : null;
+        return;
+      }
+
       out[k] = v;
     });
     return out;
@@ -1218,7 +1833,17 @@ export default function RbimForm() {
       total_members: filledLines,
       members: members
         .filter((m) => m.first_name || m.last_name)
-        .map((m, i) => ({ ...clean(m), line_no: i + 1 })),
+        /*
+         * The age is written into the row on the way out, not held in state.
+         * Keeping a derived value in state means an effect that watches Q5
+         * and writes Q4, which is a render loop waiting to happen; filling
+         * it here means the census line still carries the age it was read at.
+         */
+        .map((m, i) => ({
+          ...clean(m),
+          line_no: i + 1,
+          q4_age: ageOf(m) ?? undefined,
+        })),
     };
 
     try {
@@ -1467,7 +2092,7 @@ export default function RbimForm() {
                     {[
                       ["Q2 Relationship", m.relationships?.[String(mem.q2_relationship ?? "")] ?? "—"],
                       ["Q3 Sex", m.sexes?.[String(mem.q3_sex ?? "")] ?? "—"],
-                      ["Q4 Age", mem.q4_age != null ? String(mem.q4_age) : "—"],
+                      ["Q4 Age", ageOf(mem) !== null ? String(ageOf(mem)) : "—"],
                       ["Q5 Born", [
                         MONTHS[Number(mem.q5_birth_month) - 1],
                         mem.q5_birth_year,
@@ -1708,6 +2333,7 @@ export default function RbimForm() {
             */}
             <Text
               label="Household head"
+              maxLength={80}
               required
               hint="Last Name, First Name M.I. — this fills line 1 below."
               value={form.household_head_name as string}
@@ -1716,7 +2342,7 @@ export default function RbimForm() {
                 fillLineOneFrom(v);
               }}
             />
-            <Text label="Respondent" hint="Last Name, First Name M.I." value={form.respondent_name as string} onChange={(v) => set("respondent_name", v)} />
+            <Text label="Respondent" hint="Last Name, First Name M.I." maxLength={80} value={form.respondent_name as string} onChange={(v) => set("respondent_name", v)} />
             {/*
               Counted, not typed.
 
@@ -1750,9 +2376,9 @@ export default function RbimForm() {
               value={form.zone_purok as string}
               onChange={(v) => set("zone_purok", v)}
             />
-            <Text label="Room / Floor / Unit and Building" value={form.address_unit as string} onChange={(v) => set("address_unit", v)} />
-            <Text label="House / Lot and Block No." value={form.address_house_lot as string} onChange={(v) => set("address_house_lot", v)} />
-            <Text label="Street name" value={form.address_street as string} onChange={(v) => set("address_street", v)} />
+            <Text label="Room / Floor / Unit and Building" maxLength={80} value={form.address_unit as string} onChange={(v) => set("address_unit", v)} />
+            <Text label="House / Lot and Block No." maxLength={80} value={form.address_house_lot as string} onChange={(v) => set("address_house_lot", v)} />
+            <Text label="Street name" maxLength={80} value={form.address_street as string} onChange={(v) => set("address_street", v)} />
 
           </div>
         </Card>
@@ -1838,8 +2464,8 @@ export default function RbimForm() {
                         twenty-five-year-old stuck at 14/16 with two boxes
                         nobody could ever fill.
                       */
-                      inBand(member.q4_age, 5) && "q11_education",
-                      inBand(member.q4_age, 3) && "q12_enrolled",
+                      inBand(ageOf(member), 5) && "q11_education",
+                      inBand(ageOf(member), 3) && "q12_enrolled",
                       schoolDetailsApply(member) && "q13_school_level",
                       schoolDetailsApply(member) && "q14_school_place",
                     ], member)}
@@ -1911,7 +2537,7 @@ export default function RbimForm() {
                     */}
                     <Text
                       label="Q4 Age at last birthday"
-                      type="number"
+                      digits={3}
                       value={
                         ageFromMonthYear(member.q5_birth_month, member.q5_birth_year) ??
                         member.q4_age
@@ -1940,7 +2566,7 @@ export default function RbimForm() {
                       value={member.q5_birth_year}
                       onChange={(v) => setMember(index, "q5_birth_year", v)}
                     />
-                    <Text label="Q6 Place of birth" hint="City/Municipality and Province" value={member.q6_birthplace} onChange={(v) => setMember(index, "q6_birthplace", v)} />
+                    <Text label="Q6 Place of birth" hint="City/Municipality and Province" maxLength={80} value={member.q6_birthplace} onChange={(v) => setMember(index, "q6_birthplace", v)} />
                     <Coded label="Q7 Nationality" list={m.nationalities} value={member.q7_nationality} onChange={(v) => setMember(index, "q7_nationality", v)} />
                     {/*
                       Dead while the answer is Filipino. A country typed
@@ -1956,7 +2582,7 @@ export default function RbimForm() {
                       disabledNote="Only for a non-Filipino."
                     />
                     <Coded label="Q8 Marital status" list={m.marital_statuses} value={member.q8_marital_status} onChange={(v) => setMember(index, "q8_marital_status", v)} />
-                    <Text label="Q9 Religion" value={member.q9_religion} onChange={(v) => setMember(index, "q9_religion", v)} />
+                    <Text label="Q9 Religion" maxLength={20} value={member.q9_religion} onChange={(v) => setMember(index, "q9_religion", v)} />
                     {/*
                       The examples are printed in the question on the paper,
                       where the BHW reads them aloud. An encoder working from
@@ -1965,6 +2591,7 @@ export default function RbimForm() {
                     */}
                     <Text
                       label="Q10 Ethnicity"
+                      maxLength={30}
                       hint="Tagalog, Bicolano, Bisaya, etc."
                       value={member.q10_ethnicity}
                       onChange={(v) => setMember(index, "q10_ethnicity", v)}
@@ -1999,7 +2626,7 @@ export default function RbimForm() {
                       list={m.education_levels}
                       value={member.q11_education}
                       onChange={(v) => setMember(index, "q11_education", v)}
-                      skipped={outOfBand(member.q4_age, 5)}
+                      skipped={outOfBand(ageOf(member), 5)}
                       skippedNote="99 — under 5, so there is no level completed."
                     />
                     <Coded
@@ -2008,7 +2635,7 @@ export default function RbimForm() {
                       list={m.enrollment}
                       value={member.q12_enrolled}
                       onChange={(v) => setMember(index, "q12_enrolled", v)}
-                      skipped={outOfBand(member.q4_age, 3)}
+                      skipped={outOfBand(ageOf(member), 3)}
                       skippedNote="99 — under 3, so there is nothing to be enrolled in."
                     />
                     <Coded
@@ -2019,19 +2646,20 @@ export default function RbimForm() {
                       onChange={(v) => setMember(index, "q13_school_level", v)}
                       skipped={!schoolDetailsApply(member)}
                       skippedNote={
-                        outOfBand(member.q4_age, 3)
+                        outOfBand(ageOf(member), 3)
                           ? "99 — under 3, so there is no schooling to record."
                           : "99 — Q12 is No, and the paper skips from there to Q15."
                       }
                     />
                     <Text
                       label="Q14 Place of school"
+                      maxLength={80}
                       hint="Only when Q12 is Yes."
                       value={member.q14_school_place}
                       onChange={(v) => setMember(index, "q14_school_place", v)}
                       disabled={!schoolDetailsApply(member)}
                       disabledNote={
-                        outOfBand(member.q4_age, 3)
+                        outOfBand(ageOf(member), 3)
                           ? "Under 3 — nothing to record."
                           : "Q12 is No, so there is no school to name."
                       }
@@ -2068,21 +2696,34 @@ export default function RbimForm() {
                       against it, and a warning that is usually wrong is a
                       warning the office learns to click past.
                     */}
-                    <Text
+                    {/*
+                      One shape for a mobile number, because three arrive.
+                      0917…, +63917… and 917… are the same phone, and a clerk
+                      searching for one of them finds only the third of the
+                      register that happens to be written their way.
+                    */}
+                    <FormField
                       label="Phone number"
-                      value={member.contact_number}
-                      onChange={(v) => setMember(index, "contact_number", v)}
-                      hint="How the barangay reaches them. It may be shared with the household."
-                    />
+                      hint="Ten digits after +63. It may be shared with the household."
+                    >
+                      <PhoneInput
+                        value={String(member.contact_number ?? "")}
+                        onChange={(v) => setMember(index, "contact_number", v)}
+                      />
+                    </FormField>
                   </Section>
 
                   <Section
                     title="Q15–Q18 · Economic activity"
                     note="15 and above"
                     progress={progressOf(
-                      inBand(member.q4_age, 15)
-                        ? ["q15_monthly_income", "q16_income_source",
-                           "q17_work_status", "q18_work_place"]
+                      inBand(ageOf(member), 15)
+                        ? [
+                            "q15_monthly_income", "q16_income_source",
+                            // Remittance, investments and others SKIP TO Q19.
+                            !skipsToQ19(member) && "q17_work_status",
+                            !skipsToQ19(member) && "q18_work_place",
+                          ]
                         : [],
                       member
                     )}
@@ -2094,17 +2735,63 @@ export default function RbimForm() {
                     */}
                     <Text
                       label="Q15 Average monthly income"
-                      type="number"
+                      money
+                      digits={12}
+                      prefix="₱"
                       placeholder="0"
-                      hint="₱ per month. If none, write 0."
+                      hint="Per month. If none, write 0."
                       value={member.q15_monthly_income}
                       onChange={(v) => setMember(index, "q15_monthly_income", v)}
-                      disabled={outOfBand(member.q4_age, 15)}
+                      disabled={outOfBand(ageOf(member), 15)}
                       disabledNote="99 — under 15, so this is not asked."
                     />
-                    <Coded label="Q16 Source of income" list={m.income_sources} value={member.q16_income_source} onChange={(v) => setMember(index, "q16_income_source", v)} />
-                    <Coded label="Q17 Status of work / business" list={m.work_statuses} value={member.q17_work_status} onChange={(v) => setMember(index, "q17_work_status", v)} />
-                    <Text label="Q18 Place of work" hint="Barangay and city/municipality" value={member.q18_work_place} onChange={(v) => setMember(index, "q18_work_place", v)} />
+                    {/*
+                      Two separate reasons to close these, and the age one
+                      comes first.
+
+                      Under fifteen the whole section is 99 — the paper says
+                      so for all four, and a twelve-year-old offered a status
+                      of business is a form inviting an answer to a question
+                      the census does not ask of a child.
+
+                      Above fifteen, Q17 and Q18 still close when the income
+                      is not from WORK: remittance, investments and "others"
+                      go straight to Q19.
+                    */}
+                    <Coded
+                      label="Q16 Source of income"
+                      list={m.income_sources}
+                      value={member.q16_income_source}
+                      onChange={(v) => setMember(index, "q16_income_source", v)}
+                      skipped={outOfBand(ageOf(member), 15)}
+                      skippedNote="99 — under 15, so this is not asked."
+                      hint={skipsToQ19(member) ? "Not from work — Q17 and Q18 are skipped." : undefined}
+                    />
+                    <Coded
+                      label="Q17 Status of work / business"
+                      list={m.work_statuses}
+                      value={member.q17_work_status}
+                      onChange={(v) => setMember(index, "q17_work_status", v)}
+                      skipped={outOfBand(ageOf(member), 15) || skipsToQ19(member)}
+                      skippedNote={
+                        outOfBand(ageOf(member), 15)
+                          ? "99 — under 15, so this is not asked."
+                          : "99 — the income is not from work. SKIP TO Q19."
+                      }
+                    />
+                    <Text
+                      label="Q18 Place of work"
+                      hint="Barangay and city/municipality"
+                      maxLength={80}
+                      value={member.q18_work_place}
+                      onChange={(v) => setMember(index, "q18_work_place", v)}
+                      disabled={outOfBand(ageOf(member), 15) || skipsToQ19(member)}
+                      disabledNote={
+                        outOfBand(ageOf(member), 15)
+                          ? "99 — under 15, so this is not asked."
+                          : "99 — the income is not from work. SKIP TO Q19."
+                      }
+                    />
                   </Section>
 
                   <Section
@@ -2112,7 +2799,7 @@ export default function RbimForm() {
                     note="0 to 11 months"
                     progress={progressOf(
                       // Under one year old: an age in whole years of 0.
-                      inBand(member.q4_age, 0, 0)
+                      inBand(ageOf(member), 0, 0)
                         ? [
                             "q19_delivery_place",
                             isOther(member.q19_delivery_place, m.delivery_places) && "q19_other",
@@ -2127,6 +2814,7 @@ export default function RbimForm() {
                     <Coded label="Q19 Place of delivery" list={m.delivery_places} value={member.q19_delivery_place} onChange={(v) => setMember(index, "q19_delivery_place", v)} />
                     <Text
                       label="Q19 If others, specify"
+                      maxLength={80}
                       value={member.q19_other}
                       onChange={(v) => setMember(index, "q19_other", v)}
                       disabled={!isOther(member.q19_delivery_place, m.delivery_places)}
@@ -2135,21 +2823,24 @@ export default function RbimForm() {
                     <Coded label="Q20 Birth attendant" list={m.birth_attendants} value={member.q20_birth_attendant} onChange={(v) => setMember(index, "q20_birth_attendant", v)} />
                     <Text
                       label="Q20 If others, specify"
+                      maxLength={80}
                       value={member.q20_other}
                       onChange={(v) => setMember(index, "q20_other", v)}
                       disabled={!isOther(member.q20_birth_attendant, m.birth_attendants)}
                       disabledNote="Only when the attendant is not on the list."
                     />
-                    <Text label="Q21 Last vaccine received" hint="From the baby book or immunisation card." value={member.q21_immunization} onChange={(v) => setMember(index, "q21_immunization", v)} />
+                    <Text label="Q21 Last vaccine received" hint="From the baby book or immunisation card." maxLength={80} value={member.q21_immunization} onChange={(v) => setMember(index, "q21_immunization", v)} />
                   </Section>
 
                   <Section
                     title="Q22–Q25 · Family planning"
                     note="women 10 to 54"
                     progress={progressOf(
-                      inBand(member.q4_age, 10, 54) && maybeWoman(member, m.sexes)
+                      inBand(ageOf(member), 10, 54) && maybeWoman(member, m.sexes)
                         ? [
-                            "q22_pregnancies", "q22_living_children", "q23_fp_method",
+                            "q22_pregnancies",
+                            String(member.q22_pregnancies ?? "") !== "0" && "q22_living_children",
+                            "q23_fp_method",
                             "q24_fp_source",
                             isOther(member.q24_fp_source, m.fp_sources) && "q24_other",
                             "q25_fp_intention", "q25_detail",
@@ -2158,19 +2849,64 @@ export default function RbimForm() {
                       member
                     )}
                   >
-                    <Text label="Q22 Pregnancies" type="number" value={member.q22_pregnancies} onChange={(v) => setMember(index, "q22_pregnancies", v)} />
-                    <Text label="Q22 Children still living" type="number" value={member.q22_living_children} onChange={(v) => setMember(index, "q22_living_children", v)} />
+                    {/*
+                      One cell on the paper, split by a diagonal: pregnancies
+                      in the upper triangle, children still living in the
+                      lower. Two boxes here, because a triangle is not a
+                      thing a screen has.
+                    */}
+                    <Text
+                      label="Q22 Pregnancies"
+                      hint="Total she has had, ever. If none, write 0."
+                      digits={3}
+                      value={member.q22_pregnancies}
+                      onChange={(v) => setMember(index, "q22_pregnancies", v)}
+                    />
+                    <Text
+                      label="Q22 Children still living"
+                      hint="As of today, not at birth."
+                      digits={3}
+                      value={member.q22_living_children}
+                      onChange={(v) => setMember(index, "q22_living_children", v)}
+                      disabled={String(member.q22_pregnancies ?? "") === "0"}
+                      disabledNote="99 — no pregnancies, so none are living. SKIP TO Q23."
+                    />
                     <Coded label="Q23 FP method in use" list={m.fp_methods} value={member.q23_fp_method} onChange={(v) => setMember(index, "q23_fp_method", v)} />
                     <Coded label="Q24 Where obtained" list={m.fp_sources} value={member.q24_fp_source} onChange={(v) => setMember(index, "q24_fp_source", v)} />
                     <Text
                       label="Q24 If another source, specify"
+                      maxLength={80}
                       value={member.q24_other}
                       onChange={(v) => setMember(index, "q24_other", v)}
                       disabled={!isOther(member.q24_fp_source, m.fp_sources)}
                       disabledNote="Only when the source is not on the list."
                     />
+                    {/*
+                      Also one split cell. The Yes or No goes in the upper
+                      triangle; what goes in the lower depends on it — the
+                      METHOD after a Yes, the REASON after a No. One box, and
+                      the label says which is wanted.
+                    */}
                     <Coded label="Q25 Intend to use FP" list={m.yes_no} value={member.q25_fp_intention} onChange={(v) => setMember(index, "q25_fp_intention", v)} />
-                    <Text label="Q25 Which method, or why not" value={member.q25_detail} onChange={(v) => setMember(index, "q25_detail", v)} />
+                    <Text
+                      label={
+                        String(member.q25_fp_intention ?? "") === "1"
+                          ? "Q25 Which method"
+                          : String(member.q25_fp_intention ?? "") === "2"
+                            ? "Q25 Why not"
+                            : "Q25 Which method, or why not"
+                      }
+                      hint={
+                        String(member.q25_fp_intention ?? "") === "1"
+                          ? "The method they intend to use."
+                          : String(member.q25_fp_intention ?? "") === "2"
+                            ? "Their reason for not intending to."
+                            : "Answer Q25 and this asks for one or the other."
+                      }
+                      maxLength={80}
+                      value={member.q25_detail}
+                      onChange={(v) => setMember(index, "q25_detail", v)}
+                    />
                   </Section>
 
                   <Section
@@ -2189,6 +2925,7 @@ export default function RbimForm() {
                     <Coded label="Q26 Health insurance" list={m.health_insurance} value={member.q26_health_insurance} onChange={(v) => setMember(index, "q26_health_insurance", v)} />
                     <Text
                       label="Q26 If others, specify"
+                      maxLength={80}
                       value={member.q26_other}
                       onChange={(v) => setMember(index, "q26_other", v)}
                       disabled={!isOther(member.q26_health_insurance, m.health_insurance)}
@@ -2197,6 +2934,7 @@ export default function RbimForm() {
                     <Coded label="Q27 Facility visited (12 months)" list={m.facilities} value={member.q27_facility_visited} onChange={(v) => setMember(index, "q27_facility_visited", v)} />
                     <Text
                       label="Q27 If another facility, specify"
+                      maxLength={80}
                       value={member.q27_other}
                       onChange={(v) => setMember(index, "q27_other", v)}
                       disabled={!isOther(member.q27_facility_visited, m.facilities)}
@@ -2205,6 +2943,7 @@ export default function RbimForm() {
                     <Coded label="Q28 Reason for the visit" list={m.visit_reasons} value={member.q28_visit_reason} onChange={(v) => setMember(index, "q28_visit_reason", v)} />
                     <Text
                       label="Q28 If another reason, specify"
+                      maxLength={80}
                       value={member.q28_other}
                       onChange={(v) => setMember(index, "q28_other", v)}
                       disabled={!isOther(member.q28_visit_reason, m.visit_reasons)}
@@ -2221,40 +2960,61 @@ export default function RbimForm() {
                       block.
                     */
                     progress={progressOf([
-                      inBand(member.q4_age, 10) && "q30_solo_parent",
-                      inBand(member.q4_age, 60) && "q31_senior_registered",
-                      inBand(member.q4_age, 15) && "q32_voter_barangay",
+                      inBand(ageOf(member), 10) && "q30_solo_parent",
+                      inBand(ageOf(member), 60) && "q31_senior_registered",
+                      inBand(ageOf(member), 15) && "q32_voter_barangay",
                     ], member)}
                   >
                     <Coded label="Q30 Solo parent" hint="10 and above" list={m.solo_parent} value={member.q30_solo_parent} onChange={(v) => setMember(index, "q30_solo_parent", v)} />
                     <Coded label="Q31 Registered senior citizen" hint="60 and above" list={m.yes_no} value={member.q31_senior_registered} onChange={(v) => setMember(index, "q31_senior_registered", v)} />
-                    <Text label="Q32 Registered voter in" hint="15 and above — the barangay they are registered in." value={member.q32_voter_barangay} onChange={(v) => setMember(index, "q32_voter_barangay", v)} />
+                    <VoterField
+                      value={member.q32_voter_barangay}
+                      onChange={(v) => setMember(index, "q32_voter_barangay", v)}
+                    />
                   </Section>
 
                   <Section
                     title="Q33–Q41 · Migration"
                     note="5 and above"
                     progress={progressOf(
-                      inBand(member.q4_age, 5)
+                      inBand(ageOf(member), 5)
                         ? [
                             "q33_residence_5yrs", "q34_residence_6mos",
                             "q35_stay_years", "q35_stay_months", "q36_resident_type",
-                            "q37_transfer_month", "q37_transfer_year",
-                            "q38a_leave_reason", "q38b_leave_reason", "q38c_leave_reason",
-                            (isOther(member.q38a_leave_reason, m.leave_reasons) ||
-                              isOther(member.q38b_leave_reason, m.leave_reasons) ||
-                              isOther(member.q38c_leave_reason, m.leave_reasons)) && "q38_other",
-                            "q39_will_return", "q39_when",
-                            "q40a_transfer_reason", "q40b_transfer_reason",
-                            "q40c_transfer_reason", "q40_other",
-                            "q41_intends_to_stay", "q41_until",
+                            /*
+                              The paper: for Q37 to Q41, if non-migrant,
+                              write 99. Somebody who has always lived here
+                              has no transfer date and no reason for leaving
+                              anywhere, so none of these nine are asked.
+                            */
+                            ...(isNonMigrant(member)
+                              ? []
+                              : [
+                                  "q37_transfer_month", "q37_transfer_year",
+                                  "q38a_leave_reason",
+                                  // B and C close once A is Others.
+                                  !isOther(member.q38a_leave_reason, m.leave_reasons) &&
+                                    "q38b_leave_reason",
+                                  !isOther(member.q38a_leave_reason, m.leave_reasons) &&
+                                    "q38c_leave_reason",
+                                  (isOther(member.q38a_leave_reason, m.leave_reasons) ||
+                                    isOther(member.q38b_leave_reason, m.leave_reasons) ||
+                                    isOther(member.q38c_leave_reason, m.leave_reasons)) &&
+                                    "q38_other",
+                                  "q39_will_return", "q39_when",
+                                  "q40a_transfer_reason", "q40b_transfer_reason",
+                                  "q40c_transfer_reason", "q40_other",
+                                  "q41_intends_to_stay",
+                                  // No date after a No, and none before an answer.
+                                  String(member.q41_intends_to_stay ?? "") === "1" && "q41_until",
+                                ]),
                           ]
                         : [],
                       member
                     )}
                   >
-                    <Text label="Q33 Residence 5 years ago" value={member.q33_residence_5yrs} onChange={(v) => setMember(index, "q33_residence_5yrs", v)} />
-                    <Text label="Q34 Residence 6 months ago" value={member.q34_residence_6mos} onChange={(v) => setMember(index, "q34_residence_6mos", v)} />
+                    <Text label="Q33 Residence 5 years ago" maxLength={80} value={member.q33_residence_5yrs} onChange={(v) => setMember(index, "q33_residence_5yrs", v)} />
+                    <Text label="Q34 Residence 6 months ago" maxLength={80} value={member.q34_residence_6mos} onChange={(v) => setMember(index, "q34_residence_6mos", v)} />
                     {/*
                       The paper heads this pair "LENGTH OF STAY IN THE
                       BARANGAY". "…and months" on its own said nothing —
@@ -2264,25 +3024,99 @@ export default function RbimForm() {
                     <Text
                       label="Q35 Length of stay — years"
                       hint="How long they have lived in this barangay."
-                      type="number"
+                      digits={3}
                       value={member.q35_stay_years}
                       onChange={(v) => setMember(index, "q35_stay_years", v)}
                     />
                     <Text
                       label="Q35 Length of stay — months"
-                      hint="The part-year on top of the years above. 0 to 11."
-                      type="number"
+                      hint="The part-year on top of the years above. 0 to 11 — twelve months is a year."
+                      digits={2}
+                      max={11}
                       value={member.q35_stay_months}
                       onChange={(v) => setMember(index, "q35_stay_months", v)}
                     />
-                    <Coded label="Q36 Type of resident" hint="Worked out from Q33–Q35, not asked." list={m.resident_types} value={member.q36_resident_type} onChange={(v) => setMember(index, "q36_resident_type", v)} />
-                    <Text label="Q37 Transfer month" type="number" value={member.q37_transfer_month} onChange={(v) => setMember(index, "q37_transfer_month", v)} />
-                    <Text label="Q37 Transfer year" type="number" value={member.q37_transfer_year} onChange={(v) => setMember(index, "q37_transfer_year", v)} />
-                    <Coded label="Q38A Reason for leaving" list={m.leave_reasons} value={member.q38a_leave_reason} onChange={(v) => setMember(index, "q38a_leave_reason", v)} />
-                    <Coded label="Q38B Reason for leaving" list={m.leave_reasons} value={member.q38b_leave_reason} onChange={(v) => setMember(index, "q38b_leave_reason", v)} />
-                    <Coded label="Q38C Reason for leaving" list={m.leave_reasons} value={member.q38c_leave_reason} onChange={(v) => setMember(index, "q38c_leave_reason", v)} />
+                    {/*
+                      Q36 is worked out, not asked — the paper is explicit:
+                      non-migrant when both previous residences are this
+                      barangay; migrant when one of them is not and the stay
+                      is over six months; transient when it is under. Left
+                      open when Q33 to Q35 do not yet say, because a guess
+                      here sends eight questions to 99 for somebody who
+                      should have answered them.
+                    */}
+                    <Coded
+                      label="Q36 Type of resident"
+                      list={m.resident_types}
+                      value={member.q36_resident_type ?? residentTypeFrom(member) ?? ""}
+                      onChange={(v) => setMember(index, "q36_resident_type", v)}
+                      hint={
+                        residentTypeFrom(member)
+                          ? "Worked out from Q33–Q35. Change it if the household says otherwise."
+                          : "Answer Q33–Q35 and this fills itself."
+                      }
+                    />
+
+                    {/*
+                      NOTE on the paper: for Q37 to Q41, if non-migrant,
+                      write 99. Somebody who has always lived here did not
+                      transfer, has no reason for leaving anywhere, and has
+                      no date to give.
+                    */}
+                    <MonthYear
+                      label="Q37 Transfer month and year"
+                      hint="When they moved into this barangay."
+                      value={joinMonthYear(member.q37_transfer_month, member.q37_transfer_year)}
+                      onChange={(v) => {
+                        const { month, year } = splitMonthYear(v);
+                        setMember(index, "q37_transfer_month", month);
+                        setMember(index, "q37_transfer_year", year);
+                      }}
+                      skipped={isNonMigrant(member)}
+                      skippedNote="99 — non-migrant, so there was no transfer."
+                    />
+
+                    {/*
+                      Three DIFFERENT reasons, so each box drops what the one
+                      before it took. And "Others" in the A box ends the
+                      question: what the other reason was goes in the box
+                      below, not into two more dropdowns.
+                    */}
+                    <Coded
+                      label="Q38A Reason for leaving"
+                      list={m.leave_reasons}
+                      value={member.q38a_leave_reason}
+                      onChange={(v) => setMember(index, "q38a_leave_reason", v)}
+                      skipped={isNonMigrant(member)}
+                      skippedNote="99 — non-migrant, so nowhere was left."
+                    />
+                    <Coded
+                      label="Q38B Reason for leaving"
+                      list={without(m.leave_reasons, [member.q38a_leave_reason])}
+                      value={member.q38b_leave_reason}
+                      onChange={(v) => setMember(index, "q38b_leave_reason", v)}
+                      skipped={isNonMigrant(member) || isOther(member.q38a_leave_reason, m.leave_reasons)}
+                      skippedNote={
+                        isNonMigrant(member)
+                          ? "99 — non-migrant, so nowhere was left."
+                          : "Q38A is Others — say what it was in the box below."
+                      }
+                    />
+                    <Coded
+                      label="Q38C Reason for leaving"
+                      list={without(m.leave_reasons, [member.q38a_leave_reason, member.q38b_leave_reason])}
+                      value={member.q38c_leave_reason}
+                      onChange={(v) => setMember(index, "q38c_leave_reason", v)}
+                      skipped={isNonMigrant(member) || isOther(member.q38a_leave_reason, m.leave_reasons)}
+                      skippedNote={
+                        isNonMigrant(member)
+                          ? "99 — non-migrant, so nowhere was left."
+                          : "Q38A is Others — say what it was in the box below."
+                      }
+                    />
                     <Text
                       label="Q38 If another reason, specify"
+                      maxLength={80}
                       value={member.q38_other}
                       onChange={(v) => setMember(index, "q38_other", v)}
                       disabled={
@@ -2292,37 +3126,155 @@ export default function RbimForm() {
                       }
                       disabledNote="Only when one of Q38A–C is Others."
                     />
-                    <Coded label="Q39 Will return" list={m.yes_no} value={member.q39_will_return} onChange={(v) => setMember(index, "q39_will_return", v)} />
-                    <Text label="Q39 When" value={member.q39_when} onChange={(v) => setMember(index, "q39_when", v)} />
-                    <Coded label="Q40A Reason for transferring here" list={m.transfer_reasons} value={member.q40a_transfer_reason} onChange={(v) => setMember(index, "q40a_transfer_reason", v)} />
-                    <Coded label="Q40B Reason for transferring here" list={m.transfer_reasons} value={member.q40b_transfer_reason} onChange={(v) => setMember(index, "q40b_transfer_reason", v)} />
-                    <Coded label="Q40C Reason for transferring here" list={m.transfer_reasons} value={member.q40c_transfer_reason} onChange={(v) => setMember(index, "q40c_transfer_reason", v)} />
+                    <Coded
+                      label="Q39 Will return"
+                      list={m.yes_no}
+                      value={member.q39_will_return}
+                      onChange={(v) => setMember(index, "q39_will_return", v)}
+                      skipped={isNonMigrant(member)}
+                      skippedNote="99 — non-migrant, so there is nowhere to return to."
+                    />
+                    <MonthYear
+                      label="Q39 When"
+                      value={String(member.q39_when ?? "")}
+                      onChange={(v) => setMember(index, "q39_when", v)}
+                      skipped={isNonMigrant(member)}
+                      skippedNote="99 — non-migrant, so there is nowhere to return to."
+                    />
+                    <Coded
+                      label="Q40A Reason for transferring here"
+                      list={m.transfer_reasons}
+                      value={member.q40a_transfer_reason}
+                      onChange={(v) => setMember(index, "q40a_transfer_reason", v)}
+                      skipped={isNonMigrant(member)}
+                      skippedNote="99 — non-migrant, so there was no transfer."
+                    />
+                    <Coded
+                      label="Q40B Reason for transferring here"
+                      list={without(m.transfer_reasons, [member.q40a_transfer_reason])}
+                      value={member.q40b_transfer_reason}
+                      onChange={(v) => setMember(index, "q40b_transfer_reason", v)}
+                      skipped={isNonMigrant(member)}
+                      skippedNote="99 — non-migrant, so there was no transfer."
+                    />
+                    <Coded
+                      label="Q40C Reason for transferring here"
+                      list={without(m.transfer_reasons, [member.q40a_transfer_reason, member.q40b_transfer_reason])}
+                      value={member.q40c_transfer_reason}
+                      onChange={(v) => setMember(index, "q40c_transfer_reason", v)}
+                      skipped={isNonMigrant(member)}
+                      skippedNote="99 — non-migrant, so there was no transfer."
+                    />
                     {/*
                       Q40 has no "Others" code on the paper — the note says
                       "if other reason/s, write the response", so the box is
                       always open.
                     */}
-                    <Text label="Q40 Any other reason" value={member.q40_other} onChange={(v) => setMember(index, "q40_other", v)} />
-                    <Coded label="Q41 Intends to stay" list={m.yes_no} value={member.q41_intends_to_stay} onChange={(v) => setMember(index, "q41_intends_to_stay", v)} />
-                    <Text label="Q41 Until when" value={member.q41_until} onChange={(v) => setMember(index, "q41_until", v)} />
+                    <Text label="Q40 Any other reason" maxLength={80} value={member.q40_other} onChange={(v) => setMember(index, "q40_other", v)} />
+                    <Coded
+                      label="Q41 Intends to stay"
+                      list={m.yes_no}
+                      value={member.q41_intends_to_stay}
+                      onChange={(v) => setMember(index, "q41_intends_to_stay", v)}
+                      skipped={isNonMigrant(member)}
+                      skippedNote="99 — non-migrant, and already staying."
+                    />
+                    {/*
+                      "Until when" only means something after a Yes. After a
+                      No there is no date to give, and the paper says 99.
+                    */}
+                    <MonthYear
+                      label="Q41 Until when"
+                      value={String(member.q41_until ?? "")}
+                      onChange={(v) => setMember(index, "q41_until", v)}
+                      skipped={
+                        isNonMigrant(member) || String(member.q41_intends_to_stay ?? "") === "2"
+                      }
+                      skippedNote={
+                        isNonMigrant(member)
+                          ? "99 — non-migrant, and already staying."
+                          : "99 — they do not intend to stay, so there is no date."
+                      }
+                      disabled={!member.q41_intends_to_stay}
+                      disabledNote="Answer Q41 first."
+                    />
                   </Section>
 
                   <Section
                     title="Q42–Q44 · Community tax & skills"
                     progress={progressOf([
-                      inBand(member.q4_age, 18) && "q42a_has_ctc",
-                      inBand(member.q4_age, 18) && "q42b_ctc_here",
-                      inBand(member.q4_age, 15) && "q43_training_interest",
-                      "q44_skill",
-                      isOther(member.q44_skill, m.skills) && "q44_other",
+                      inBand(ageOf(member), 18) && "q42a_has_ctc",
+                      // No CTC, nothing to have been issued here. SKIP TO Q43.
+                      inBand(ageOf(member), 18) &&
+                        String(member.q42a_has_ctc ?? "") !== "2" &&
+                        "q42b_ctc_here",
+                      inBand(ageOf(member), 15) && "q43_training_interest",
+                      inBand(ageOf(member), 15) &&
+                        isOther(member.q43_training_interest, m.trainings) &&
+                        "q43_other",
+                      // NOTE on the paper: for Q43 and Q44, if 0–14, write 99.
+                      inBand(ageOf(member), 15) && "q44_skill",
+                      inBand(ageOf(member), 15) &&
+                        isOther(member.q44_skill, m.skills) &&
+                        "q44_other",
                     ], member)}
                   >
-                    <Coded label="Q42A Has a valid CTC" hint="18 and above" list={m.yes_no} value={member.q42a_has_ctc} onChange={(v) => setMember(index, "q42a_has_ctc", v)} />
-                    <Coded label="Q42B Issued in this barangay" list={m.yes_no} value={member.q42b_ctc_here} onChange={(v) => setMember(index, "q42b_ctc_here", v)} />
-                    <Coded label="Q43 Training interested in" hint="15 and above" list={m.trainings} value={member.q43_training_interest} onChange={(v) => setMember(index, "q43_training_interest", v)} />
-                    <Coded label="Q44 Most prominent skill" list={m.skills} value={member.q44_skill} onChange={(v) => setMember(index, "q44_skill", v)} />
+                    <Coded
+                      label="Q42A Has a valid CTC"
+                      hint="18 and above"
+                      list={m.yes_no}
+                      value={member.q42a_has_ctc}
+                      onChange={(v) => setMember(index, "q42a_has_ctc", v)}
+                      skipped={outOfBand(ageOf(member), 18)}
+                      skippedNote="99 — under 18."
+                    />
+                    {/*
+                      "Was it issued here" has no answer when there is no
+                      CTC. The paper: if No, write the answer and SKIP TO Q43.
+                    */}
+                    <Coded
+                      label="Q42B Issued in this barangay"
+                      list={m.yes_no}
+                      value={member.q42b_ctc_here}
+                      onChange={(v) => setMember(index, "q42b_ctc_here", v)}
+                      skipped={
+                        outOfBand(ageOf(member), 18) || String(member.q42a_has_ctc ?? "") === "2"
+                      }
+                      skippedNote={
+                        outOfBand(ageOf(member), 18)
+                          ? "99 — under 18."
+                          : "99 — no CTC to have been issued. SKIP TO Q43."
+                      }
+                    />
+                    <Coded
+                      label="Q43 Training interested in"
+                      hint="15 and above"
+                      list={m.trainings}
+                      value={member.q43_training_interest}
+                      onChange={(v) => setMember(index, "q43_training_interest", v)}
+                      skipped={outOfBand(ageOf(member), 15)}
+                      skippedNote="99 — under 15."
+                    />
+                    <Text
+                      label="Q43 If another training, specify"
+                      maxLength={80}
+                      value={member.q43_other}
+                      onChange={(v) => setMember(index, "q43_other", v)}
+                      disabled={!isOther(member.q43_training_interest, m.trainings)}
+                      disabledNote="Only when the training is not on the list."
+                    />
+                    <Coded
+                      label="Q44 Most prominent skill"
+                      hint="15 and above"
+                      list={m.skills}
+                      value={member.q44_skill}
+                      onChange={(v) => setMember(index, "q44_skill", v)}
+                      skipped={outOfBand(ageOf(member), 15)}
+                      skippedNote="99 — under 15."
+                    />
                     <Text
                       label="Q44 If others, specify"
+                      maxLength={80}
                       value={member.q44_other}
                       onChange={(v) => setMember(index, "q44_other", v)}
                       disabled={!isOther(member.q44_skill, m.skills)}
@@ -2410,6 +3362,7 @@ export default function RbimForm() {
               <Coded label="Q47 Fuel for lighting" list={h.lighting_fuels} value={form.q47_lighting_fuel as number} onChange={(v) => set("q47_lighting_fuel", v)} />
               <Text
                 label="Q47 If others, specify"
+                maxLength={80}
                 value={form.q47_other as string}
                 onChange={(v) => set("q47_other", v)}
                 disabled={!isOther(form.q47_lighting_fuel, h.lighting_fuels)}
@@ -2418,6 +3371,7 @@ export default function RbimForm() {
               <Coded label="Q48 Fuel for cooking" list={h.cooking_fuels} value={form.q48_cooking_fuel as number} onChange={(v) => set("q48_cooking_fuel", v)} />
               <Text
                 label="Q48 If others, specify"
+                maxLength={80}
                 value={form.q48_other as string}
                 onChange={(v) => set("q48_other", v)}
                 disabled={!isOther(form.q48_cooking_fuel, h.cooking_fuels)}
@@ -2426,6 +3380,7 @@ export default function RbimForm() {
               <Coded label="Q49 Drinking water" list={h.water_sources} value={form.q49_water_source as number} onChange={(v) => set("q49_water_source", v)} />
               <Text
                 label="Q49 If others, specify"
+                maxLength={80}
                 value={form.q49_other as string}
                 onChange={(v) => set("q49_other", v)}
                 disabled={!isOther(form.q49_water_source, h.water_sources)}
@@ -2436,6 +3391,7 @@ export default function RbimForm() {
               <Coded label="Q51 Toilet facility" list={h.toilets} value={form.q51_toilet as number} onChange={(v) => set("q51_toilet", v)} />
               <Text
                 label="Q51 If others, specify"
+                maxLength={80}
                 value={form.q51_other as string}
                 onChange={(v) => set("q51_other", v)}
                 disabled={!isOther(form.q51_toilet, h.toilets)}
@@ -2445,27 +3401,53 @@ export default function RbimForm() {
               <Coded label="Q53 Outer wall material" hint="Observed, not asked." list={h.outer_walls} value={form.q53_outer_wall as number} onChange={(v) => set("q53_outer_wall", v)} />
               <Text
                 label="Q53 If others, specify"
+                maxLength={80}
                 value={form.q53_other as string}
                 onChange={(v) => set("q53_other", v)}
                 disabled={!isOther(form.q53_outer_wall, h.outer_walls)}
                 disabledNote="Only when the material is not on the list."
               />
 
-              <Text label="Q54 Female death — age" type="number" hint="In the past 12 months." value={form.q54_female_death_age as number} onChange={(v) => set("q54_female_death_age", v)} />
-              <Text label="Q54 Cause of death" value={form.q54_female_death_cause as string} onChange={(v) => set("q54_female_death_cause", v)} />
-              <Text label="Q55 Child under 5 — age" type="number" value={form.q55_child_death_age as number} onChange={(v) => set("q55_child_death_age", v)} />
-              <Coded label="Q55 Sex" list={m.sexes} value={form.q55_child_death_sex as number} onChange={(v) => set("q55_child_death_sex", v)} />
-              <Text label="Q55 Cause of death" value={form.q55_child_death_cause as string} onChange={(v) => set("q55_child_death_cause", v)} />
+              {/*
+                Four questions the paper gives a fixed number of blanks and
+                life does not. A household can lose two people in a year and
+                can name four diseases; recorded in three boxes, the fourth
+                answer simply never happened.
+              */}
+              <DeathList
+                label="Q54 Female deaths in the past 12 months"
+                hint="Every woman in this household who died in the past year, whatever the cause."
+                rows={listOf<DeathRow>("q54_female_deaths")}
+                onChange={(next) => setList("q54_female_deaths", next)}
+                addLabel="Add a death"
+                maxAge={120}
+              />
+              <DeathList
+                label="Q55 Deaths of children under five, past 12 months"
+                rows={listOf<DeathRow>("q55_child_deaths")}
+                onChange={(next) => setList("q55_child_deaths", next)}
+                addLabel="Add a death"
+                maxAge={5}
+                sexes={m.sexes}
+              />
+              <StringList
+                label="Q56 Most common diseases in the household"
+                placeholder="e.g. Hypertension"
+                values={listOf<string>("q56_common_diseases")}
+                onChange={(next) => setList("q56_common_diseases", next)}
+                addLabel="Add a disease"
+              />
+              <StringList
+                label="Q57 Primary needs of the household"
+                placeholder="e.g. Livelihood assistance"
+                values={listOf<string>("q57_primary_needs")}
+                onChange={(next) => setList("q57_primary_needs", next)}
+                addLabel="Add a need"
+              />
 
-              <Text label="Q56 Common disease 1" value={form.q56_common_disease_1 as string} onChange={(v) => set("q56_common_disease_1", v)} />
-              <Text label="Q56 Common disease 2" value={form.q56_common_disease_2 as string} onChange={(v) => set("q56_common_disease_2", v)} />
-              <Text label="Q56 Common disease 3" value={form.q56_common_disease_3 as string} onChange={(v) => set("q56_common_disease_3", v)} />
-              <Text label="Q57 Primary need 1" value={form.q57_primary_need_1 as string} onChange={(v) => set("q57_primary_need_1", v)} />
-              <Text label="Q57 Primary need 2" value={form.q57_primary_need_2 as string} onChange={(v) => set("q57_primary_need_2", v)} />
-              <Text label="Q57 Primary need 3" value={form.q57_primary_need_3 as string} onChange={(v) => set("q57_primary_need_3", v)} />
-              <Text label="Q58 In 5 years — barangay" value={form.q58_intend_barangay as string} onChange={(v) => set("q58_intend_barangay", v)} />
-              <Text label="Q58 Municipality" value={form.q58_intend_municipality as string} onChange={(v) => set("q58_intend_municipality", v)} />
-              <Text label="Q58 Province" value={form.q58_intend_province as string} onChange={(v) => set("q58_intend_province", v)} />
+              <Text label="Q58 In 5 years — barangay" maxLength={80} value={form.q58_intend_barangay as string} onChange={(v) => set("q58_intend_barangay", v)} />
+              <Text label="Q58 Municipality" maxLength={80} value={form.q58_intend_municipality as string} onChange={(v) => set("q58_intend_municipality", v)} />
+              <Text label="Q58 Province" maxLength={80} value={form.q58_intend_province as string} onChange={(v) => set("q58_intend_province", v)} />
             </div>
           </fieldset>
         </Card>
@@ -2492,10 +3474,10 @@ export default function RbimForm() {
             </div>
 
             <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
-              <Text label="Name on the consent" value={form.consent_name as string} onChange={(v) => set("consent_name", v)} />
+              <Text label="Name on the consent" maxLength={80} value={form.consent_name as string} onChange={(v) => set("consent_name", v)} />
               <Text label="Date encoded" type="date" value={(form.date_encoded as string)?.slice(0, 10)} onChange={(v) => set("date_encoded", v)} />
-              <Text label="Encoder" value={form.encoder_name as string} onChange={(v) => set("encoder_name", v)} />
-              <Text label="Supervisor" value={form.supervisor_name as string} onChange={(v) => set("supervisor_name", v)} />
+              <Text label="Encoder" maxLength={80} value={form.encoder_name as string} onChange={(v) => set("encoder_name", v)} />
+              <Text label="Supervisor" maxLength={80} value={form.supervisor_name as string} onChange={(v) => set("supervisor_name", v)} />
             </div>
           </fieldset>
         </Card>

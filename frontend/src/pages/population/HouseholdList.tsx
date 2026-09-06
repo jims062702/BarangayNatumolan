@@ -22,6 +22,8 @@ export default function HouseholdList() {
   const [rows, setRows] = useState<Household[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
   // One modal for both add and edit — editingId null = adding.
@@ -43,6 +45,7 @@ export default function HouseholdList() {
       .then((r) => {
         setRows(r.data.data.data ?? []);
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
       })
       .finally(() => setLoading(false));
   };
@@ -174,6 +177,8 @@ export default function HouseholdList() {
           ]}
           rows={rows}
           rowKey={(h) => h.id}
+          numbered
+          total={total}
           searchable
           searchPlaceholder="Search by household #, owner, or address…"
           getSearchText={(h) =>

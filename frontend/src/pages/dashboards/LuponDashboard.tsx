@@ -8,6 +8,7 @@ import Card from "../../components/UI/Card";
 import StatTile from "../../components/UI/StatTile";
 import PageHeader from "../../components/UI/PageHeader";
 import type { LuponHearing, LuponSettlement } from "../../types";
+import RevealGroup from "../../components/UI/RevealGroup";
 
 interface Deadlines {
   upcoming_hearings: LuponHearing[];
@@ -40,19 +41,19 @@ export default function LuponDashboard() {
         actions={
           <Link
             to="/lupon/cases"
-            className="rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            Open case docket
+            <FiBookOpen className="h-4 w-4" aria-hidden="true" /> Open case docket
           </Link>
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <RevealGroup className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Active Docket" value={pendingCases} icon={FiBookOpen} />
         <StatTile label="Upcoming Hearings" value={deadlines?.upcoming_hearings.length ?? 0} icon={FiCalendar} tone="warning" />
         <StatTile label="In Repudiation Window" value={deadlines?.repudiation_window.length ?? 0} icon={FiClock} tone="danger" />
         <StatTile label="Pending Compliance" value={deadlines?.pending_compliance.length ?? 0} icon={FiAlertCircle} tone="success" />
-      </div>
+      </RevealGroup>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <Card title="Upcoming hearings">

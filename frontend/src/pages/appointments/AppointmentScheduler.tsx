@@ -4,11 +4,14 @@ import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { formatWallClock } from "../../lib/datetime";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { FiCheck, FiXCircle, FiEdit3 } from "react-icons/fi";
+import RowAction, { RowActions } from "../../components/UI/RowAction";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import StatusBadge from "../../components/UI/StatusBadge";
 import PageHeader from "../../components/UI/PageHeader";
-import { inputClasses } from "../../components/UI/FormField";
+import FormField, { inputClasses } from "../../components/UI/FormField";
+import Modal from "../../components/UI/Modal";
 import type { Appointment } from "../../types";
 
 export default function AppointmentScheduler() {
@@ -16,7 +19,22 @@ export default function AppointmentScheduler() {
   const [date, setDate] = useState("");
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+
+  /*
+   * The minutes sheet.
+   *
+   * Kept out of the booking form on purpose: booking is the front desk's act
+   * and minute-taking is the secretary's, and the API gates them separately.
+   */
+  const [minuting, setMinuting] = useState<Appointment | null>(null);
+  const [attendance, setAttendance] = useState("Awaiting");
+  const [startedAt, setStartedAt] = useState("");
+  const [endedAt, setEndedAt] = useState("");
+  const [minutes, setMinutes] = useState("");
+  const [savingMinutes, setSavingMinutes] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -25,6 +43,7 @@ export default function AppointmentScheduler() {
       .then((r) => {
         setRows(r.data.data.data ?? []);
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
       })
       .finally(() => setLoading(false));
   };
@@ -36,6 +55,40 @@ export default function AppointmentScheduler() {
 
   // Live updates: bookings and cancellations appear without a refresh.
   useAutoRefresh(load, REFRESH.staff);
+
+  /** "14:30" out of a time column that may arrive as "14:30:00". */
+  const asTime = (value: string | null | undefined) => (value ? value.slice(0, 5) : "");
+
+  const openMinutes = (a: Appointment) => {
+    setMinuting(a);
+    setAttendance(a.attendance ?? "Awaiting");
+    setStartedAt(asTime(a.started_at));
+    setEndedAt(asTime(a.ended_at));
+    setMinutes(a.minutes ?? "");
+  };
+
+  const saveMinutes = async () => {
+    if (!minuting) return;
+    setSavingMinutes(true);
+
+    try {
+      await api.post(`/appointments/${minuting.id}/minutes`, {
+        attendance,
+        /* Nobody came, so there is no time it ran — the server clears these
+           too, but sending them would be claiming a meeting happened. */
+        started_at: attendance === "Absent" ? null : startedAt || null,
+        ended_at: attendance === "Absent" ? null : endedAt || null,
+        minutes: minutes || null,
+      });
+      toast(`Minutes recorded for ${minuting.appointment_number}.`);
+      setMinuting(null);
+      load();
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    } finally {
+      setSavingMinutes(false);
+    }
+  };
 
   const confirm = async (appointment: Appointment) => {
     if (
@@ -115,33 +168,64 @@ export default function AppointmentScheduler() {
             },
             { header: "Status", render: (a: Appointment) => <StatusBadge status={a.status} /> },
             {
+              /*
+                What actually happened, beside what was booked. "Awaiting"
+                reads as not yet answered rather than as a claim either way.
+              */
+              header: "Attendance",
+              render: (a: Appointment) =>
+                !a.attendance || a.attendance === "Awaiting" ? (
+                  <span className="text-sm text-gray-400">Not taken</span>
+                ) : (
+                  <div>
+                    <StatusBadge status={a.attendance} />
+                    {a.started_at && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        {asTime(a.started_at)}
+                        {a.ended_at ? ` – ${asTime(a.ended_at)}` : ""}
+                      </p>
+                    )}
+                  </div>
+                ),
+            },
+            {
               header: "Actions",
               render: (a: Appointment) => (
-                <div className="flex gap-1.5">
+                <RowActions>
                   {["Scheduled", "Pending"].includes(a.status) && (
-                    <button
-                      type="button"
+                    <RowAction
+                      label="Confirm appointment"
+                      icon={FiCheck}
+                      tone="primary"
                       onClick={() => confirm(a)}
-                      className="cursor-pointer rounded-full bg-success px-3 py-1 text-xs font-semibold text-white hover:opacity-90"
-                    >
-                      Confirm
-                    </button>
+                    />
+                  )}
+                  {/* The secretary's act, and available for as long as the
+                      appointment was not cancelled — minutes are often
+                      written up after the fact. */}
+                  {a.status !== "Cancelled" && (
+                    <RowAction
+                      label="Record attendance & minutes"
+                      icon={FiEdit3}
+                      onClick={() => openMinutes(a)}
+                    />
                   )}
                   {!["Cancelled", "Completed"].includes(a.status) && (
-                    <button
-                      type="button"
+                    <RowAction
+                      label="Cancel appointment"
+                      icon={FiXCircle}
+                      tone="danger"
                       onClick={() => cancel(a)}
-                      className="cursor-pointer rounded-full border border-danger/40 px-3 py-1 text-xs font-semibold text-danger hover:bg-danger hover:text-white"
-                    >
-                      Cancel
-                    </button>
+                    />
                   )}
-                </div>
+                </RowActions>
               ),
             },
           ]}
           rows={rows}
           rowKey={(a) => a.id}
+          numbered
+          total={total}
           searchable
           searchPlaceholder="Search by name or appointment #…"
           getSearchText={(a) =>
@@ -155,6 +239,83 @@ export default function AppointmentScheduler() {
           onPageChange={setPage}
         />
       </Card>
+
+      <Modal
+        open={minuting !== null}
+        onClose={() => setMinuting(null)}
+        title={minuting ? `Minutes · ${minuting.appointment_number}` : "Minutes"}
+      >
+        <div className="space-y-5 p-5">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <FormField label="Attendance" required>
+              <select
+                value={attendance}
+                onChange={(e) => setAttendance(e.target.value)}
+                className={inputClasses}
+              >
+                <option value="Awaiting">Awaiting — not yet known</option>
+                <option value="Present">Present</option>
+                <option value="Late">Late</option>
+                <option value="Absent">Absent</option>
+              </select>
+            </FormField>
+
+            {/*
+              Hidden when nobody came. A form that asks what time an absent
+              resident started is a form that invites a wrong answer.
+            */}
+            {attendance !== "Absent" && (
+              <>
+                <FormField label="Started">
+                  <input
+                    type="time"
+                    value={startedAt}
+                    onChange={(e) => setStartedAt(e.target.value)}
+                    className={inputClasses}
+                  />
+                </FormField>
+
+                <FormField label="Ended">
+                  <input
+                    type="time"
+                    value={endedAt}
+                    onChange={(e) => setEndedAt(e.target.value)}
+                    className={inputClasses}
+                  />
+                </FormField>
+              </>
+            )}
+          </div>
+
+          <FormField label="What was discussed and agreed">
+            <textarea
+              rows={8}
+              value={minutes}
+              onChange={(e) => setMinutes(e.target.value)}
+              className={inputClasses}
+              placeholder="The record of the meeting"
+            />
+          </FormField>
+
+          <div className="flex justify-end gap-3 border-t border-gray pt-4">
+            <button
+              type="button"
+              onClick={() => setMinuting(null)}
+              className="cursor-pointer rounded-full border border-gray px-5 py-2.5 text-sm font-semibold text-dark transition hover:border-primary/50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={saveMinutes}
+              disabled={savingMinutes}
+              className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark disabled:opacity-60"
+            >
+              {savingMinutes ? "Saving…" : "Save the minutes"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

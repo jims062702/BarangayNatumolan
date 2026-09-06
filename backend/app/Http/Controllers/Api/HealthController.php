@@ -72,12 +72,16 @@ class HealthController extends BaseController
     {
         $query = ImmunizationRecord::with(['child:id,resident_number,first_name,last_name,birthdate']);
 
+        // Counted before the status filter narrows it — see statusCounts.
+        $counts = $this->statusCounts($query);
+
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
 
         return $this->success(
-            $query->orderByDesc('vaccination_date')->paginate(20),
+            $query->orderByDesc('vaccination_date')->paginate(20)->toArray()
+                + ['counts' => $counts],
             'Immunization records retrieved'
         );
     }

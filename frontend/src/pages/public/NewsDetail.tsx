@@ -1,18 +1,32 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { FiArrowLeft, FiCalendar, FiChevronRight, FiClock, FiMapPin } from "react-icons/fi";
+import {
+  FiAlertTriangle, FiArrowLeft, FiCalendar, FiChevronRight, FiClock,
+  FiMapPin, FiPhone, FiUser, FiUsers,
+} from "react-icons/fi";
 import { api } from "../../lib/api";
 import { scrollToLandingSection } from "../../lib/landingSection";
 import { news as staticNews } from "../../data/news";
+import { KIND, URGENCY_TONE, badgeFor, kindOf, postDate, whenOf } from "../../lib/postKinds";
 
 interface ApiAnnouncement {
   id: number;
   title: string;
   body: string;
   category?: string | null;
+  author_name?: string | null;
+  byline?: string | null;
   location?: string | null;
   event_at?: string | null;
   event_time?: string | null;
+  organizer?: string | null;
+  contact_info?: string | null;
+  registration_deadline?: string | null;
+  completed_at?: string | null;
+  participants?: string | null;
+  effective_at?: string | null;
+  expires_at?: string | null;
+  urgency?: string | null;
   image_url?: string | null;
   published_at?: string | null;
 }
@@ -22,27 +36,74 @@ interface NewsView {
   id: number | string;
   title: string;
   category?: string | null;
+  author?: string | null;
   date: string;
   time: string;
+  /**
+   * Empty when the post has no venue.
+   *
+   * It used to default to "Barangay Natumolan", which put a place under
+   * every post including the ones that are not held anywhere — an invented
+   * fact printed with the same confidence as a real one.
+   */
   location: string;
   description: string;
   image: string;
-}
-
-function formatDate(value?: string | null): string {
-  return value ? new Date(value).toLocaleDateString("en-PH", { dateStyle: "long" }) : "";
+  /** Kept so the badge can tell an event that has passed from one that has not. */
+  eventAt?: string | null;
+  /** The rest of what this KIND carries, ready to render as a list. */
+  facts: { icon: typeof FiCalendar; label: string; value: string }[];
+  urgency?: string | null;
 }
 
 function toView(a: ApiAnnouncement, index = 0): NewsView {
+  const kind = kindOf(a.category);
+
+  /*
+   * Only what this kind actually has. An Event names its organiser and how
+   * to register; an Activity names who took part; an Advisory names when it
+   * stops applying. Showing all of them on every post is how a page ends up
+   * asserting things nobody entered.
+   */
+  const facts: NewsView["facts"] = [];
+
+  if (kind === "Event") {
+    if (a.organizer) facts.push({ icon: FiUsers, label: "Organised by", value: a.organizer });
+    if (a.contact_info) facts.push({ icon: FiPhone, label: "Contact", value: a.contact_info });
+    if (a.registration_deadline) {
+      facts.push({ icon: FiClock, label: "Register by", value: postDate(a.registration_deadline) });
+    }
+  }
+
+  if (kind === "Activity" && a.participants) {
+    facts.push({ icon: FiUsers, label: "Who took part", value: a.participants });
+  }
+
+  if (kind === "Advisory") {
+    if (a.effective_at) facts.push({ icon: FiCalendar, label: "In effect from", value: postDate(a.effective_at) });
+    if (a.expires_at) facts.push({ icon: FiClock, label: "Until", value: postDate(a.expires_at) });
+  }
+
+  if (kind === "Program") {
+    if (a.contact_info) facts.push({ icon: FiPhone, label: "Contact", value: a.contact_info });
+    if (a.registration_deadline) {
+      facts.push({ icon: FiClock, label: "Register by", value: postDate(a.registration_deadline) });
+    }
+  }
+
   return {
     id: a.id,
     title: a.title,
     category: a.category,
-    date: formatDate(a.event_at ?? a.published_at),
+    author: a.byline ?? a.author_name,
+    eventAt: a.event_at,
+    date: whenOf({ ...a, category: a.category ?? undefined }),
     time: a.event_time ?? "",
-    location: a.location ?? "Barangay Natumolan",
+    location: a.location ?? "",
     description: a.body,
     image: a.image_url || staticNews[index % staticNews.length].image,
+    facts,
+    urgency: a.urgency,
   };
 }
 
@@ -77,7 +138,7 @@ export default function NewsDetail() {
             staticNews
               .filter((n) => String(n.id) !== String(passed.id))
               .slice(0, 3)
-              .map((n) => ({ ...n, category: "News" }))
+              .map((n) => ({ ...n, category: "Announcement", facts: [], author: null }))
           );
         } else {
           setMissing(true);
@@ -161,11 +222,27 @@ export default function NewsDetail() {
               className="h-72 w-full object-cover sm:h-[30rem]"
             />
             <div className="p-6 sm:p-10">
-              {item.category && (
-                <span className="inline-block rounded-full bg-primary/10 px-3.5 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
-                  {item.category}
-                </span>
-              )}
+              <span className="flex flex-wrap items-center gap-2">
+                {item.category && (
+                  <span
+                    className={`inline-block rounded-full px-3.5 py-1 text-xs font-bold uppercase tracking-wide ${
+                      KIND[kindOf(item.category)].tone
+                    }`}
+                  >
+                    {badgeFor({ category: item.category, event_at: item.eventAt })}
+                  </span>
+                )}
+                {item.urgency && (
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${
+                      URGENCY_TONE[item.urgency] ?? "bg-secondary text-gray-600"
+                    }`}
+                  >
+                    <FiAlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                    {item.urgency} urgency
+                  </span>
+                )}
+              </span>
               <h1 className="mt-3 text-3xl font-extrabold leading-tight text-dark sm:text-4xl">
                 {item.title}
               </h1>
@@ -180,10 +257,35 @@ export default function NewsDetail() {
                     <FiClock className="shrink-0 text-primary" aria-hidden="true" /> {item.time}
                   </span>
                 )}
-                <span className="inline-flex items-center gap-2">
-                  <FiMapPin className="shrink-0 text-primary" aria-hidden="true" /> {item.location}
-                </span>
+                {/* Only when there IS one. */}
+                {item.location && (
+                  <span className="inline-flex items-center gap-2">
+                    <FiMapPin className="shrink-0 text-primary" aria-hidden="true" /> {item.location}
+                  </span>
+                )}
+                {item.author && (
+                  <span className="inline-flex items-center gap-2">
+                    <FiUser className="shrink-0 text-primary" aria-hidden="true" /> By {item.author}
+                  </span>
+                )}
               </div>
+
+              {/* What this kind of post carries, and nothing else. */}
+              {item.facts.length > 0 && (
+                <dl className="mt-5 grid gap-3 rounded-2xl bg-secondary/60 p-5 sm:grid-cols-2">
+                  {item.facts.map((fact) => (
+                    <div key={fact.label} className="flex items-start gap-3">
+                      <fact.icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                      <div className="min-w-0">
+                        <dt className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                          {fact.label}
+                        </dt>
+                        <dd className="text-sm font-medium text-dark">{fact.value}</dd>
+                      </div>
+                    </div>
+                  ))}
+                </dl>
+              )}
               {/* Larger body text, but the line length is capped: the card is
                   now 1280px wide and prose that runs the full width is very
                   hard to read back to the next line. */}

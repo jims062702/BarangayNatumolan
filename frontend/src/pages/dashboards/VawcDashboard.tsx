@@ -6,6 +6,10 @@ import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
 import StatTile from "../../components/UI/StatTile";
 import PageHeader from "../../components/UI/PageHeader";
+import RevealGroup from "../../components/UI/RevealGroup";
+import ReplayOnView from "../../components/UI/ReplayOnView";
+import BandChart from "../../components/UI/BandChart";
+import RatioRing from "../../components/UI/RatioRing";
 
 interface VawcStats {
   total_cases_active: number;
@@ -38,9 +42,9 @@ export default function VawcDashboard() {
         actions={
           <Link
             to="/vawc/cases"
-            className="rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            Open case registry
+            <FiShield className="h-4 w-4" aria-hidden="true" /> Open case registry
           </Link>
         }
       />
@@ -52,35 +56,55 @@ export default function VawcDashboard() {
         routed to Lupon mediation.
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <RevealGroup className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Active Cases" value={stats?.total_cases_active ?? 0} icon={FiShield} tone="danger" />
         <StatTile label="Cases This Year" value={stats?.total_cases_year ?? 0} icon={FiClock} />
         <StatTile label="Referrals Made" value={stats?.referrals_made ?? 0} icon={FiSend} tone="success" />
         <StatTile label="Pending Follow-ups" value={stats?.pending_followups ?? 0} icon={FiAlertTriangle} tone="warning" />
-      </div>
+      </RevealGroup>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <Card title="Cases by type of violence (this year)">
-          {(stats?.cases_by_violence_type ?? []).length === 0 ? (
-            <p className="py-6 text-center text-sm text-gray-400">No cases recorded this year.</p>
-          ) : (
-            <ul className="space-y-2">
-              {stats?.cases_by_violence_type.map((row) => (
-                <li key={row.violence_type} className="flex items-center justify-between rounded-xl bg-secondary px-4 py-2.5">
-                  <span className="text-sm font-medium text-dark">{row.violence_type}</span>
-                  <span className="rounded-full bg-primary/10 px-3 py-0.5 text-sm font-bold text-primary">
-                    {row.count}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
+        <Card title="Cases by type of violence (this year)" className="flex h-full flex-col">
+          {/*
+            One hue, because this is one measure. Giving each kind of violence
+            its own colour would say the colours mean something, and they
+            would mean only which row it is — which the label already says.
+          */}
+          <ReplayOnView className="flex min-h-0 flex-1 flex-col">
+            <BandChart
+              data={(stats?.cases_by_violence_type ?? []).map((row) => ({
+                label: row.violence_type,
+                count: row.count,
+              }))}
+              empty="No cases recorded this year."
+              unit="cases"
+              minHeight={260}
+              angledLabels
+            />
+          </ReplayOnView>
         </Card>
 
-        <Card title="Cases involving children (this year)">
-          <div className="flex h-full flex-col items-center justify-center gap-2 py-6">
-            <p className="text-5xl font-extrabold text-primary">{stats?.cases_with_children ?? 0}</p>
-            <p className="text-sm text-gray-500">
+        {/*
+          One number, so not a chart. What a chart could add here is the
+          PROPORTION — five of twelve is a different fact from five — so the
+          rule underneath says that much and nothing more.
+        */}
+        <Card title="Cases involving children (this year)" className="flex h-full flex-col">
+          {/*
+            A part of a whole, which is the one job a ring is good at. Five
+            cases out of twelve is a different fact from five, and it is the
+            one somebody reading a caseload is after.
+          */}
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 py-2">
+            <ReplayOnView className="w-full">
+              <RatioRing
+                value={stats?.cases_with_children ?? 0}
+                of={stats?.total_cases_year ?? 0}
+                caption={`of ${stats?.total_cases_year ?? 0} cases this year`}
+              />
+            </ReplayOnView>
+
+            <p className="text-center text-sm text-gray-500">
               cases include children or dependents — coordinate with MSWDO and
               child-protection agencies as needed.
             </p>

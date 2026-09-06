@@ -91,11 +91,13 @@ class RbimCensusMember extends Model
     /** Q19 — place of delivery. */
     public const DELIVERY_PLACES = [
         1 => 'Public hospital', 2 => 'Private hospital',
-        3 => 'Lying-in clinic', 4 => 'Home',
+        3 => 'Lying-in clinic', 4 => 'Home', 5 => 'Others',
     ];
 
     /** Q20 — who attended the delivery. */
-    public const BIRTH_ATTENDANTS = [1 => 'Doctor', 2 => 'Nurse', 3 => 'Midwife', 4 => 'Hilot'];
+    public const BIRTH_ATTENDANTS = [
+        1 => 'Doctor', 2 => 'Nurse', 3 => 'Midwife', 4 => 'Hilot', 5 => 'Others',
+    ];
 
     /** Q23/Q25 — family planning method. */
     public const FP_METHODS = [
@@ -110,13 +112,14 @@ class RbimCensusMember extends Model
     public const FP_SOURCES = [
         1 => 'Government hospital', 2 => 'RHU/Health center',
         3 => 'Brgy. Health Station', 4 => 'Private hospital', 5 => 'Pharmacy',
+        6 => 'Others',
     ];
 
     /** Q26 — primary health insurance. */
     public const HEALTH_INSURANCE = [
         1 => 'PhilHealth paying member', 2 => 'PhilHealth dependent of paying member',
         3 => 'PhilHealth indigent member', 4 => 'PhilHealth dependent of indigent member',
-        5 => 'GSIS', 6 => 'SSS', 7 => 'Private/HMO',
+        5 => 'GSIS', 6 => 'SSS', 7 => 'Private/HMO', 8 => 'Others',
     ];
 
     /** Q27 — facility visited in the past 12 months. */
@@ -124,13 +127,14 @@ class RbimCensusMember extends Model
         1 => 'Government hospital', 2 => 'RHU/Health center',
         3 => 'Brgy. Health Station', 4 => 'Private hospital',
         5 => 'Private clinic', 6 => 'Pharmacy', 7 => 'Hilot/Herbalist',
+        8 => 'Others',
     ];
 
     /** Q28 — reason for the visit. */
     public const VISIT_REASONS = [
         1 => 'Sick/Injured', 2 => 'Prenatal/Postnatal', 3 => 'Gave birth',
         4 => 'Dental', 5 => 'Medical check-up', 6 => 'Medical requirement',
-        7 => 'NHTS/CCT/4Ps requirement',
+        7 => 'NHTS/CCT/4Ps requirement', 8 => 'Others',
     ];
 
     /** Q29 — disability. */
@@ -189,6 +193,7 @@ class RbimCensusMember extends Model
         5 => 'Heavy Equipment Operation',
         6 => 'Plumbing',
         7 => 'Welding',
+        8 => 'Others',
     ];
 
     /** Q44 — the most prominent skill the member already has. */

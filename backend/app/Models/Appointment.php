@@ -17,11 +17,20 @@ class Appointment extends Model
         'notes',
         'cancelled_at',
         'cancellation_reason',
+
+        /* What actually happened, written by the secretary afterwards. */
+        'attendance',
+        'started_at',
+        'ended_at',
+        'minutes',
+        'minuted_by',
+        'minuted_at',
     ];
 
     protected $casts = [
         'scheduled_datetime' => 'datetime',
         'cancelled_at' => 'datetime',
+        'minuted_at' => 'datetime',
     ];
 
     public function serviceRequest(): BelongsTo

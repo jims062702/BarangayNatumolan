@@ -19,6 +19,19 @@ class RbimCensus extends Model
     protected function casts(): array
     {
         return [
+            /*
+             * Q54 to Q57 are lists, not single answers.
+             *
+             * A household can lose more than one person in a year, and can
+             * name more than three diseases. The paper has a fixed number of
+             * blanks because paper does; a form that copies that limit
+             * records the household as having lost one when it lost two.
+             */
+            'q54_female_deaths' => 'array',
+            'q55_child_deaths' => 'array',
+            'q56_common_diseases' => 'array',
+            'q57_primary_needs' => 'array',
+
             'is_institutional' => 'boolean',
             'consent_given' => 'boolean',
             'date_encoded' => 'date',

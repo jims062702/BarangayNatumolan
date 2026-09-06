@@ -103,7 +103,16 @@ class PublicController extends BaseController
         return $this->success($stats, 'Barangay statistics');
     }
 
-    /** Published announcements. Cached per page+category. */
+    /**
+     * Everything the public news page needs, in one call.
+     *
+     * The page shows three things at once — the chips with their counts, the
+     * posts of whichever kind is chosen, and the events still to come. Three
+     * requests for one screen is three chances for it to arrive in pieces.
+     *
+     * Cached for six hours and cleared the moment a post is saved, so the
+     * office never has to wait for a page they have just published.
+     */
     public function announcements(Request $request)
     {
         $page = max(1, (int) $request->query('page', 1));
@@ -111,14 +120,25 @@ class PublicController extends BaseController
         $key = LandingCache::announcementsKey($page, $category);
 
         $result = Cache::remember($key, now()->addHours(6), function () use ($category) {
-            $query = Announcement::where('is_published', true);
+            $query = Announcement::public()->with('creator:id,name');
 
             if ($category !== '') {
                 $query->where('category', $category);
             }
 
-            return $query->orderBy('sort_order')->orderByDesc('published_at')
-                ->paginate(10)->toArray();
+            $posts = $query->orderBy('sort_order')->orderByDesc('published_at')
+                /* A tiebreaker, or two posts saved in the same minute swap
+                   places in the grid on every reload. */
+                ->orderByDesc('id')
+                ->paginate(12)->toArray();
+
+            return $posts + [
+                'upcoming' => Announcement::public()->with('creator:id,name')
+                    ->upcoming()->limit(6)->get(),
+                'counts' => Announcement::public()
+                    ->selectRaw('category, COUNT(*) as total')
+                    ->groupBy('category')->pluck('total', 'category'),
+            ];
         });
 
         return $this->success($result, 'Announcements retrieved');
@@ -127,11 +147,13 @@ class PublicController extends BaseController
     /** One published announcement + up to 3 related posts (same category first). */
     public function announcement(Announcement $announcement)
     {
-        if (!$announcement->is_published) {
+        if ($announcement->status !== 'Published') {
             return $this->error('Announcement not found', 404);
         }
 
-        $related = Announcement::where('is_published', true)
+        $announcement->load('creator:id,name');
+
+        $related = Announcement::public()->with('creator:id,name')
             ->where('id', '!=', $announcement->id)
             ->orderByRaw('CASE WHEN category = ? THEN 0 ELSE 1 END', [$announcement->category])
             ->orderBy('sort_order')

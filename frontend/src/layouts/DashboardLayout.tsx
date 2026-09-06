@@ -4,6 +4,7 @@ import { FiBell, FiLogOut, FiMenu, FiSidebar, FiVolume2, FiVolumeX, FiX } from "
 import { useAuth, homePathFor } from "../contexts/AuthContext";
 import { useSignOut } from "../hooks/useSignOut";
 import ErrorBoundary from "../components/ErrorBoundary";
+import ChatWidget from "../components/ChatWidget/ChatWidget";
 import { menuFor } from "../lib/menu";
 import { api } from "../lib/api";
 import { useAutoRefresh, REFRESH } from "../hooks/useAutoRefresh";
@@ -427,6 +428,16 @@ export default function DashboardLayout() {
           </ErrorBoundary>
         </main>
       </div>
+
+      {/*
+        The assistant, for residents only.
+
+        It lived on the public site alone, so a resident signed in to do the
+        thing they came for — check a request, read an announcement — had to
+        leave the portal and go back to the landing page to ask a question
+        about it. Staff have the desk itself and do not need the widget.
+      */}
+      {user.role === "Resident" && <ChatWidget />}
     </div>
   );
 }

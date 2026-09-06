@@ -35,6 +35,12 @@ class ServiceRequestController extends BaseController
             $query->where('office', $request->office);
         }
         
+        /*
+         * Counted before the status filter narrows it, so every chip reports
+         * its own total rather than zero-except-the-one-you-picked.
+         */
+        $counts = $this->statusCounts($query);
+
         if ($request->has('status')) {
             $query->where('status', $request->status);
         }
@@ -48,7 +54,11 @@ class ServiceRequestController extends BaseController
         }
 
         $requests = $query->orderBy('created_at', 'desc')->paginate(20);
-        return $this->success($requests, 'Service requests retrieved');
+
+        return $this->success(
+            $requests->toArray() + ['counts' => $counts],
+            'Service requests retrieved'
+        );
     }
 
     /** The only service a non-resident may ask the barangay for. */

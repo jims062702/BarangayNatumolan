@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { FiPlus } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
@@ -97,7 +98,7 @@ export default function MaternalChild() {
           title="Maternal / prenatal registry"
           action={
             <button type="button" onClick={() => setMaternalOpen(true)} className="cursor-pointer text-sm font-medium text-primary hover:underline">
-              + Register
+              <FiPlus className="h-4 w-4" aria-hidden="true" /> Register
             </button>
           }
         >
@@ -117,6 +118,8 @@ export default function MaternalChild() {
             ]}
             rows={maternal}
             rowKey={(m) => m.id}
+            numbered
+            total={maternal.length}
             searchable
             searchPlaceholder="Search by mother…"
             getSearchText={(m) => (m.mother ? `${m.mother.first_name} ${m.mother.last_name}` : "")}
@@ -129,7 +132,7 @@ export default function MaternalChild() {
           title="Child health & nutrition"
           action={
             <button type="button" onClick={() => setChildOpen(true)} className="cursor-pointer text-sm font-medium text-primary hover:underline">
-              + Record
+              <FiPlus className="h-4 w-4" aria-hidden="true" /> Record
             </button>
           }
         >
@@ -145,6 +148,7 @@ export default function MaternalChild() {
             ]}
             rows={children}
             rowKey={(c) => c.id}
+            numbered
             searchable
             searchPlaceholder="Search by child…"
             getSearchText={(c) => (c.child ? `${c.child.first_name} ${c.child.last_name}` : "")}

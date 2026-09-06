@@ -8,7 +8,6 @@ import {
   FiClipboard,
   FiClock,
   FiFileText,
-  FiShare2,
 } from "react-icons/fi";
 import { api } from "../../lib/api";
 import { formatWallClock } from "../../lib/datetime";
@@ -35,7 +34,9 @@ interface ExecutiveSummary {
     creator?: { name: string } | null;
   }[];
   documents_awaiting_count: number;
-  referrals_requiring_action: {
+  /* Retired with the referrals module. Left declared so an older API
+     response does not become a type error mid-deploy. */
+  referrals_requiring_action?: {
     id: number;
     referral_number: string;
     receiving_office: string;
@@ -43,7 +44,7 @@ interface ExecutiveSummary {
     status: string;
     resident?: { first_name: string; last_name: string } | null;
   }[];
-  referrals_action_count: number;
+  referrals_action_count?: number;
   office_workload: Record<string, { pending: number; in_progress: number; total: number }>;
   aging_requests: Record<string, number>;
   oldest_open_request?: {
@@ -145,7 +146,6 @@ export default function MainOfficeDashboard({ executive = false }: Props) {
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <StatTile label="Ready To Claim" value={stats.ready_to_claim ?? 0} icon={FiClock} tone="warning" />
           <StatTile label="Documents To Sign" value={exec?.documents_awaiting_count ?? 0} icon={FiFileText} tone="warning" />
-          <StatTile label="Referrals To Action" value={exec?.referrals_action_count ?? 0} icon={FiShare2} tone="warning" />
           <StatTile label="Certificates This Month" value={stats.monthly_certificates ?? 0} icon={FiAward} />
           <StatTile label="Scheduled Appointments" value={appointments.length} icon={FiCalendar} />
           <StatTile label="KP Hearings / Deadlines" value={kpCounts.hearings + kpCounts.repudiation} icon={FiBookOpen} tone="warning" />
@@ -207,6 +207,8 @@ export default function MainOfficeDashboard({ executive = false }: Props) {
               ]}
               rows={appointments.slice(0, 6)}
               rowKey={(a) => a.id}
+              numbered
+              total={appointments.slice(0, 6).length}
               emptyMessage="No upcoming appointments."
             />
           </Card>
@@ -243,38 +245,6 @@ export default function MainOfficeDashboard({ executive = false }: Props) {
             )}
           </Card>
 
-          <Card
-            title="Referrals requiring action"
-            action={
-              <Link to="/referrals" className="text-sm font-medium text-primary hover:underline">
-                Open referrals
-              </Link>
-            }
-          >
-            {(exec?.referrals_requiring_action ?? []).length === 0 ? (
-              <p className="py-6 text-center text-sm text-gray-400">
-                No referrals are past their follow-up date.
-              </p>
-            ) : (
-              <ul className="divide-y divide-gray/70">
-                {exec?.referrals_requiring_action.map((r) => (
-                  <li key={r.id} className="flex items-center justify-between gap-3 py-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-dark">
-                        {r.resident
-                          ? `${r.resident.first_name} ${r.resident.last_name}`
-                          : r.referral_number}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {r.receiving_office} · follow-up {asDate(r.followup_date)}
-                      </p>
-                    </div>
-                    <StatusBadge status={r.status} />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
         </div>
 
         {/* Office workload, aging requests, most-requested services */}
@@ -442,6 +412,7 @@ export default function MainOfficeDashboard({ executive = false }: Props) {
             ]}
             rows={recent}
             rowKey={(r) => r.id}
+            numbered
             emptyMessage="No recent requests."
           />
         </Card>

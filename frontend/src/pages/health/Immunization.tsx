@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { FiPlus } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
@@ -32,6 +33,15 @@ export default function Immunization() {
   const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
+  /*
+   * How many sit under each chip. Of the whole list rather than the page,
+   * and unmoved by which chip is picked — otherwise the chosen one would
+   * read its total and every other would read zero, which is exactly the
+   * question the chips are there to answer.
+   */
+  const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -46,7 +56,9 @@ export default function Immunization() {
       .get("/health/immunization", { params: { page, status: statusFilter || undefined } })
       .then((r) => {
         setRows(r.data.data.data ?? []);
+        setCounts(r.data.data.counts ?? {});
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
       })
       .finally(() => setLoading(false));
   };
@@ -88,9 +100,9 @@ export default function Immunization() {
           <button
             type="button"
             onClick={() => setCreateOpen(true)}
-            className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            + Record vaccine
+            <FiPlus className="h-4 w-4" aria-hidden="true" /> Record vaccine
           </button>
         }
       />
@@ -110,6 +122,9 @@ export default function Immunization() {
               }`}
             >
               {tab || "All"}
+              {tab && counts[tab] ? (
+                <span className="ml-1.5 opacity-70">{counts[tab]}</span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -132,6 +147,8 @@ export default function Immunization() {
           ]}
           rows={rows}
           rowKey={(r) => r.id}
+          numbered
+          total={total}
           searchable
           searchPlaceholder="Search by child or vaccine…"
           getSearchText={(r) =>

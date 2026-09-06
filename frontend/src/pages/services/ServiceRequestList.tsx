@@ -20,8 +20,16 @@ const MANUAL_MOVES = ["In Progress", "Completed", "Rejected"];
 export default function ServiceRequestList() {
   const [rows, setRows] = useState<ServiceRequest[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
+  /*
+   * How many sit under each status, for the chips. Of the whole list rather
+   * than the page, and unmoved by which chip is picked — otherwise the
+   * chosen one would read its total and every other would read zero.
+   */
+  const [counts, setCounts] = useState<Record<string, number>>({});
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const [detail, setDetail] = useState<ServiceRequest | null>(null);
@@ -33,6 +41,8 @@ export default function ServiceRequestList() {
       .then((r) => {
         setRows(r.data.data.data ?? []);
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
+        setCounts(r.data.data.counts ?? {});
       })
       .finally(() => setLoading(false));
   };
@@ -133,6 +143,7 @@ export default function ServiceRequestList() {
               }`}
             >
               {status}
+              {counts[status] ? <span className="ml-1.5 opacity-70">{counts[status]}</span> : null}
             </button>
           ))}
         </div>
@@ -205,6 +216,8 @@ export default function ServiceRequestList() {
           ]}
           rows={rows}
           rowKey={(r) => r.id}
+          numbered
+          total={total}
           searchable
           searchPlaceholder="Search by name, request #, or service…"
           getSearchText={(r) =>

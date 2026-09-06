@@ -5,8 +5,8 @@ use App\Http\Controllers\Api\AdministrativeRecordController;
 use App\Http\Controllers\Api\AdminUserController;
 use App\Http\Controllers\Api\AnnouncementController;
 use App\Http\Controllers\Api\AppointmentController;
+use App\Http\Controllers\Api\BarangaySessionController;
 use App\Http\Controllers\Api\AuthController;
-use App\Http\Controllers\Api\BlotterController;
 use App\Http\Controllers\Api\CertificateController;
 use App\Http\Controllers\Api\ChatController;
 use App\Http\Controllers\Api\DashboardController;
@@ -20,10 +20,7 @@ use App\Http\Controllers\Api\PortalController;
 use App\Http\Controllers\Api\PublicController;
 use App\Http\Controllers\Api\RbimCensusController;
 use App\Http\Controllers\Api\ResidentTransferController;
-use App\Http\Controllers\Api\QueueController;
-use App\Http\Controllers\Api\ReferralController;
 use App\Http\Controllers\Api\ResidentController;
-use App\Http\Controllers\Api\ServiceGuideController;
 use App\Http\Controllers\Api\ServiceRequestController;
 use App\Http\Controllers\Api\VawcController;
 
@@ -71,6 +68,12 @@ Route::middleware('auth:sanctum')->group(function () {
     // Resumes the resident's own thread without the browser-stored token,
     // so a chat started on a laptop is there on their phone.
     Route::get('chat/mine', [ChatController::class, 'mine']);
+    /*
+     * Resolved conversations, which the resident keeps. Declared before the
+     * token route below — its 48-character constraint would not match
+     * "history" anyway, but the order says the intent.
+     */
+    Route::get('chat/history', [ChatController::class, 'history']);
     /*
     | The token pattern is pinned to the 48 random characters the server
     | issues. Without it `chat/{token}` is declared first and would swallow
@@ -133,6 +136,11 @@ Route::middleware('auth:sanctum')->group(function () {
         // What a certificate needs and costs, so the request form can say so.
         Route::get('certificate-services', [PortalController::class, 'certificateServices']);
         Route::get('profile', [PortalController::class, 'profile']);
+        /*
+         * The one field on their own record a resident may change. Everything
+         * else in the registry belongs to the Population Office.
+         */
+        Route::put('profile/occupation', [PortalController::class, 'updateOccupation']);
         // Parents, lola/lolo, spouse, children and siblings, read-only.
         Route::get('family', [PortalController::class, 'family']);
         /*
@@ -257,8 +265,14 @@ Route::middleware('auth:sanctum')->group(function () {
         | print, release. The Punong Barangay signs the paper on its way to
         | the counter, which is a thing that happens at a desk rather than a
         | route here. Nothing on this line is a decision about the request.
+        |
+        | Denied to the Secretary at the route, not merely hidden from the
+        | menu: two people working one counter list is how the same
+        | certificate gets started twice.
         */
-        Route::middleware('office:Main Office,PB,AdminRole')->group(function () {
+        Route::middleware(['office:Main Office,PB,AdminRole', 'deny_role:Secretary'])->group(function () {
+            // Declared before the apiResource, or "report" is swallowed as an id.
+            Route::get('certificates/report', [CertificateController::class, 'report']);
             Route::get('certificates/fee-schedule', [CertificateController::class, 'feeSchedule']);
             Route::get('certificates/requirements', [CertificateController::class, 'requirements']);
             Route::apiResource('certificates', CertificateController::class)
@@ -266,7 +280,6 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('certificates/{certificate}/accept', [CertificateController::class, 'accept']);
             Route::post('certificates/{certificate}/mark-printed', [CertificateController::class, 'markPrinted']);
             Route::post('certificates/{certificate}/release', [CertificateController::class, 'release']);
-            Route::post('certificates/{certificate}/cancel', [CertificateController::class, 'cancel']);
             Route::post('certificates/{certificate}/reprint', [CertificateController::class, 'reprint']);
         });
 
@@ -288,59 +301,21 @@ Route::middleware('auth:sanctum')->group(function () {
         });
 
         /*
-        | The blotter — the desk's record of what was reported.
+        | Request intake — the Clerk's, and the PB's to oversee.
         |
-        | Main Office and the PB. NOT the other desks: an incident book
-        | the whole hall can read is the reason VAWC keeps its own.
+        | The window queue that used to sit here is gone: it numbered people
+        | for a counter that issues documents from the request itself, so the
+        | same piece of work was tracked in two places.
         */
-        Route::middleware('office:Main Office,PB,AdminRole')->group(function () {
-            Route::get('blotters', [BlotterController::class, 'index']);
-            Route::post('blotters', [BlotterController::class, 'store']);
-            Route::get('blotters/{blotter}', [BlotterController::class, 'show']);
-            Route::put('blotters/{blotter}', [BlotterController::class, 'update']);
-        });
-
-        /*
-        | Front desk — request intake and the window queue. Main Office only
-        | (Clerk and Secretary), plus the PB. The Lupon works its own docket
-        | and its own hearing calendar, not the service counter.
-        */
-        Route::middleware('office:Main Office,PB,AdminRole')->group(function () {
+        Route::middleware(['office:Main Office,PB,AdminRole', 'deny_role:Secretary'])->group(function () {
             Route::apiResource('service-requests', ServiceRequestController::class);
             Route::get('service-requests/{serviceRequest}/status', [ServiceRequestController::class, 'getStatus']);
-
-            Route::get('queue', [QueueController::class, 'index']);
-            Route::post('queue', [QueueController::class, 'store']);
-            Route::post('queue/{queue}/call', [QueueController::class, 'call']);
-            Route::post('queue/{queue}/serve', [QueueController::class, 'serve']);
-            Route::post('queue/{queue}/complete', [QueueController::class, 'complete']);
-            Route::post('queue/{queue}/absent', [QueueController::class, 'absent']);
-            Route::delete('queue/{queue}', [QueueController::class, 'destroy']);
         });
 
         /*
         | Everything below is off-limits to the Clerk (requests & certificates only).
         */
         Route::middleware('deny_role:Clerk')->group(function () {
-            /*
-            | Cross-office coordination and aggregated reporting — Main Office
-            | and the Punong Barangay.
-            |
-            | Every other desk coordinates and reports inside its own module:
-            | the VAWC Desk keeps a separate referral trail behind its own
-            | gate, the Health Station records referrals on the visit /
-            | maternal / child forms, the Lupon routes through the CFA, and
-            | the Population Office has its own sectoral analytics. The
-            | statistics here measure service requests, referrals and
-            | administrative records — none of which those offices own.
-            */
-            Route::middleware('office:Main Office,PB,AdminRole')->group(function () {
-                Route::get('reports/service-statistics', [DashboardController::class, 'getServiceStatistics']);
-                Route::get('referrals/statistics', [ReferralController::class, 'statistics']);
-                Route::apiResource('referrals', ReferralController::class)
-                    ->only(['index', 'store', 'show', 'update', 'destroy']);
-            });
-
             // Barangay administrative records (ordinances, resolutions, …)
             Route::prefix('administrative-records')->middleware('office:Main Office,PB,AdminRole')->group(function () {
                 Route::get('statistics', [AdministrativeRecordController::class, 'statistics']);
@@ -359,13 +334,33 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::apiResource('appointments', AppointmentController::class);
                 Route::post('appointments/{appointment}/confirm', [AppointmentController::class, 'confirm']);
                 Route::post('appointments/{appointment}/cancel', [AppointmentController::class, 'cancel']);
+
+                /*
+                 | What actually happened: who came, when it really ran, and
+                 | what was agreed. The secretary's act — booking is the
+                 | desk's, and the two are separate verbs so they can be
+                 | separate people.
+                 */
+                Route::post('appointments/{appointment}/minutes', [AppointmentController::class, 'minutes']);
             });
 
-            // AI service-guide knowledge base (Main Office / PB / Admin)
-            Route::prefix('manage')->middleware('office:Main Office,PB,AdminRole')->group(function () {
-                Route::apiResource('service-guides', ServiceGuideController::class)
-                    ->only(['index', 'store', 'update', 'destroy']);
+            /*
+            | The session record — the minutes of the Sangguniang Barangay.
+            |
+            | The secretary writes it and the Punong Barangay adopts it.
+            | Adoption is a separate route with a narrower gate on purpose: a
+            | secretary who could adopt their own minutes would make the
+            | status mean nothing.
+            */
+            Route::middleware('office:Main Office,PB,AdminRole')->group(function () {
+                Route::apiResource('sessions', BarangaySessionController::class)
+                    ->parameters(['sessions' => 'barangaySession'])
+                    ->only(['index', 'store', 'show', 'update', 'destroy']);
+
+                Route::post('sessions/{barangaySession}/adopt', [BarangaySessionController::class, 'adopt'])
+                    ->middleware('office:PB,AdminRole');
             });
+
         });
 
         /*
@@ -412,16 +407,33 @@ Route::middleware('auth:sanctum')->group(function () {
         /*
         | Lupon Tagapamayapa — Lupon office + Punong Barangay.
         */
+        /*
+        | The hearing calendar, and only that.
+        |
+        | The barangay secretary takes the minutes at a mediation, so they
+        | reach the hearings — but not the cases behind them, not the
+        | settlements and not the reports. Widening the whole Lupon gate to
+        | give them a calendar would hand over the docket with it.
+        |
+        | The Clerk is kept out: certificates are their work, not the KP's.
+        */
+        Route::prefix('lupon')
+            ->middleware(['office:Lupon,PB,Main Office,AdminRole', 'deny_role:Clerk'])
+            ->group(function () {
+                Route::get('hearings', [LuponController::class, 'deskHearings']);
+                Route::put('hearings/{hearing}', [LuponController::class, 'updateHearing']);
+                Route::post('hearings/{hearing}/summons', [LuponController::class, 'recordSummons']);
+                Route::post('hearings/{hearing}/reschedule', [LuponController::class, 'rescheduleHearing']);
+            });
+
         Route::prefix('lupon')->middleware('office:Lupon,PB')->group(function () {
             Route::get('deadlines', [LuponController::class, 'deadlines']);
             Route::get('reports/monthly-transmittal', [LuponController::class, 'generateMonthlyReport']);
 
-            // Desk-wide worklists: the hearing calendar and the compliance
-            // register, both spanning the whole docket.
-            Route::get('hearings', [LuponController::class, 'deskHearings']);
-            Route::put('hearings/{hearing}', [LuponController::class, 'updateHearing']);
-            Route::post('hearings/{hearing}/summons', [LuponController::class, 'recordSummons']);
-            Route::post('hearings/{hearing}/reschedule', [LuponController::class, 'rescheduleHearing']);
+            // The compliance register, spanning the whole docket.
+            // (The hearing calendar sits in its own group below — the
+            // barangay secretary minutes those hearings without being given
+            // the docket they belong to.)
             Route::get('settlements', [LuponController::class, 'deskSettlements']);
             Route::post('settlements/{settlement}/action', [LuponController::class, 'deskSettlementAction']);
             Route::get('cases', [LuponController::class, 'index']);

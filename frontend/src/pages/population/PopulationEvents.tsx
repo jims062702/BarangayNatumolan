@@ -3,6 +3,8 @@ import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { FiCheck, FiX, FiPlus } from "react-icons/fi";
+import RowAction, { RowActions } from "../../components/UI/RowAction";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import Modal from "../../components/UI/Modal";
@@ -26,6 +28,8 @@ export default function PopulationEvents() {
   const [rows, setRows] = useState<PopulationEvent[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -41,6 +45,7 @@ export default function PopulationEvents() {
       .then((r) => {
         setRows(r.data.data.data ?? []);
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
       })
       .finally(() => setLoading(false));
   };
@@ -100,9 +105,9 @@ export default function PopulationEvents() {
           <button
             type="button"
             onClick={() => setCreateOpen(true)}
-            className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            + Record event
+            <FiPlus className="h-4 w-4" aria-hidden="true" /> Record event
           </button>
         }
       />
@@ -128,27 +133,27 @@ export default function PopulationEvents() {
               header: "Actions",
               render: (e: PopulationEvent) =>
                 e.verification_status === "Pending" ? (
-                  <div className="flex gap-1.5">
-                    <button
-                      type="button"
+                  <RowActions>
+                    <RowAction
+                      label="Verify event"
+                      icon={FiCheck}
+                      tone="primary"
                       onClick={() => verify(e, "Verified")}
-                      className="cursor-pointer rounded-full bg-success px-3 py-1 text-xs font-semibold text-white hover:opacity-90"
-                    >
-                      Verify
-                    </button>
-                    <button
-                      type="button"
+                    />
+                    <RowAction
+                      label="Reject event"
+                      icon={FiX}
+                      tone="danger"
                       onClick={() => verify(e, "Rejected")}
-                      className="cursor-pointer rounded-full border border-danger/40 px-3 py-1 text-xs font-semibold text-danger hover:bg-danger hover:text-white"
-                    >
-                      Reject
-                    </button>
-                  </div>
+                    />
+                  </RowActions>
                 ) : null,
             },
           ]}
           rows={rows}
           rowKey={(e) => e.id}
+          numbered
+          total={total}
           searchable
           searchPlaceholder="Search by resident or description…"
           getSearchText={(e) =>

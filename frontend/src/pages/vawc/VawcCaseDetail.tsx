@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { FiArrowLeft } from "react-icons/fi";
+import {   FiArrowLeft, FiPlus , FiXCircle , FiRotateCcw } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
@@ -99,17 +99,17 @@ export default function VawcCaseDetail() {
               <button
                 type="button"
                 onClick={() => updateStatus("Closed")}
-                className="cursor-pointer rounded-full border border-gray px-5 py-2.5 text-sm font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
+                className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-gray px-5 py-2.5 text-sm font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
               >
-                Close case
+                <FiXCircle className="h-4 w-4" aria-hidden="true" /> Close case
               </button>
             ) : (
               <button
                 type="button"
                 onClick={() => updateStatus("Active")}
-                className="cursor-pointer rounded-full border border-gray px-5 py-2.5 text-sm font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
+                className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-gray px-5 py-2.5 text-sm font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
               >
-                Reopen case
+                <FiRotateCcw className="h-4 w-4" aria-hidden="true" /> Reopen case
               </button>
             )}
             <StatusBadge status={caseData.status} />
@@ -171,7 +171,7 @@ export default function VawcCaseDetail() {
           title="Referrals & service coordination"
           action={
             <button type="button" onClick={() => setReferralOpen(true)} className="cursor-pointer text-sm font-medium text-primary hover:underline">
-              + Refer
+              <FiPlus className="h-4 w-4" aria-hidden="true" /> Refer
             </button>
           }
         >
@@ -203,7 +203,7 @@ export default function VawcCaseDetail() {
           title="Follow-ups & monitoring"
           action={
             <button type="button" onClick={() => setFollowupOpen(true)} className="cursor-pointer text-sm font-medium text-primary hover:underline">
-              + Record
+              <FiPlus className="h-4 w-4" aria-hidden="true" /> Record
             </button>
           }
         >
@@ -252,7 +252,7 @@ export default function VawcCaseDetail() {
           title="Confidential documents"
           action={
             <button type="button" onClick={() => setDocOpen(true)} className="cursor-pointer text-sm font-medium text-primary hover:underline">
-              + Add document
+              <FiPlus className="h-4 w-4" aria-hidden="true" /> Add document
             </button>
           }
         >

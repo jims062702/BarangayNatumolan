@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { FiAlertTriangle, FiCheckCircle, FiClock, FiShield } from "react-icons/fi";
 import { api } from "../../lib/api";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { FiEye } from "react-icons/fi";
+import RowAction, { RowActions } from "../../components/UI/RowAction";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import Modal from "../../components/UI/Modal";
@@ -10,6 +12,7 @@ import StatTile from "../../components/UI/StatTile";
 import StatusBadge from "../../components/UI/StatusBadge";
 import PageHeader from "../../components/UI/PageHeader";
 import type { VawcFollowup } from "../../types";
+import RevealGroup from "../../components/UI/RevealGroup";
 
 const SAFETY_STATUSES = ["Safe", "At Risk", "Critical", "Unknown"];
 const BPO_STATES = ["Compliant", "Violated", "No BPO"];
@@ -27,6 +30,8 @@ export default function VawcFollowups() {
   const [rows, setRows] = useState<VawcFollowup[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [dueOnly, setDueOnly] = useState(false);
   const [viewing, setViewing] = useState<VawcFollowup | null>(null);
@@ -38,6 +43,7 @@ export default function VawcFollowups() {
       .then((r) => {
         setRows(r.data.data.data ?? []);
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
       })
       .finally(() => setLoading(false));
   };
@@ -68,7 +74,7 @@ export default function VawcFollowups() {
         Women and Children Protection Desk — never the Lupon.
       </div>
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <RevealGroup className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="At risk / critical" value={atRisk} icon={FiAlertTriangle} tone="danger" />
         <StatTile label="BPO violations" value={violated} icon={FiShield} tone="danger" />
         <StatTile label="Follow-ups due" value={overdue} icon={FiClock} tone="warning" />
@@ -78,7 +84,7 @@ export default function VawcFollowups() {
           icon={FiCheckCircle}
           tone="success"
         />
-      </div>
+      </RevealGroup>
 
       <Card>
         <label className="mb-4 flex w-fit cursor-pointer items-center gap-2 text-sm text-dark">
@@ -155,18 +161,16 @@ export default function VawcFollowups() {
             {
               header: "Actions",
               render: (f: VawcFollowup) => (
-                <button
-                  type="button"
-                  onClick={() => setViewing(f)}
-                  className="cursor-pointer rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
-                >
-                  View
-                </button>
+                <RowActions>
+                  <RowAction label="View follow-up" icon={FiEye} onClick={() => setViewing(f)} />
+                </RowActions>
               ),
             },
           ]}
           rows={rows}
           rowKey={(f) => f.id}
+          numbered
+          total={total}
           searchable
           searchPlaceholder="Search by case code or visit type…"
           getSearchText={(f) =>

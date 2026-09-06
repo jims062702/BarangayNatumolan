@@ -349,11 +349,37 @@ class PopulationController extends BaseController
         return $this->success($residents, 'Verification lookup results');
     }
 
+    /**
+     * Who is on one sector list.
+     *
+     * Every OTHER list they are on comes too. A Population Officer planning a
+     * feeding programme needs to know which of these children are also 4Ps,
+     * and going back to each profile one at a time to find out is how a list
+     * of forty takes an afternoon.
+     *
+     * "All" is a real answer here: it is how the office sees everybody who is
+     * tagged at all, and — with `untagged` — everybody who is not.
+     */
     public function getSectorList(Request $request, $sector)
     {
-        $residents = Resident::bonafide()->whereHas('sectors', function ($q) use ($sector) {
-            $q->where('sector_type', $sector)->where('is_active', true);
-        })->paginate(20);
+        $query = Resident::bonafide()
+            ->where('is_active', true)
+            ->with(['sectors' => fn ($q) => $q->where('is_active', true)])
+            ->select([
+                'id', 'resident_number', 'first_name', 'middle_name', 'last_name',
+                'suffix', 'gender', 'birthdate', 'zone_purok', 'contact_number',
+            ]);
+
+        if ($sector === 'untagged') {
+            $query->whereDoesntHave('sectors', fn ($q) => $q->where('is_active', true));
+        } elseif ($sector !== 'all') {
+            $query->whereHas('sectors', fn ($q) => $q->where('sector_type', $sector)
+                ->where('is_active', true));
+        } else {
+            $query->whereHas('sectors', fn ($q) => $q->where('is_active', true));
+        }
+
+        $residents = $query->orderBy('last_name')->paginate(20);
 
         return $this->success([
             'sector' => $sector,
@@ -394,6 +420,7 @@ class PopulationController extends BaseController
                 ->orderByDesc('count')
                 ->get(),
             'intervention' => $this->getInterventionShortlist(),
+            'register_by_month' => $this->registerByMonth(),
         ], 'Population analytics retrieved');
     }
 
@@ -406,14 +433,25 @@ class PopulationController extends BaseController
     {
         // Non-residents are relatives elsewhere; a dependency ratio built
         // on them describes no population that exists.
-        $ages = Resident::bonafide()->where('is_active', true)
-            ->whereNotNull('birthdate')
-            ->pluck('birthdate')
-            ->map(fn ($b) => $b->age);
+        $today = now(self::MANILA)->toDateString();
+        $years = 'TIMESTAMPDIFF(YEAR, birthdate, ?)';
 
-        $young = $ages->filter(fn ($a) => $a <= 14)->count();
-        $working = $ages->filter(fn ($a) => $a >= 15 && $a <= 64)->count();
-        $old = $ages->filter(fn ($a) => $a >= 65)->count();
+        $counted = Resident::bonafide()->where('is_active', true)
+            ->whereNotNull('birthdate')
+            ->selectRaw(
+                "CASE
+                    WHEN {$years} <= 14 THEN 'young'
+                    WHEN {$years} <= 64 THEN 'working'
+                    ELSE 'old'
+                END as band, COUNT(*) as total",
+                array_fill(0, 2, $today)
+            )
+            ->groupBy('band')
+            ->pluck('total', 'band');
+
+        $young = (int) ($counted['young'] ?? 0);
+        $working = (int) ($counted['working'] ?? 0);
+        $old = (int) ($counted['old'] ?? 0);
 
         $ratio = fn ($count) => $working > 0 ? round(($count / $working) * 100, 1) : 0;
 
@@ -486,40 +524,209 @@ class PopulationController extends BaseController
      */
     private function getInterventionShortlist(): array
     {
-        $indicators = ['4Ps Household', 'PWD', 'Solo Parent', 'Indigent', 'Unemployed', 'Pregnant Women'];
+        /*
+         * The four lists this barangay actually keeps. Unemployed and
+         * Pregnant Women were here too, and a shortlist built on a list
+         * nobody maintains points the office at the wrong households.
+         */
+        $indicators = ['4Ps Household', 'PWD', 'Solo Parent', 'Indigent'];
 
-        $rows = Resident::bonafide()->where('is_active', true)
-            ->whereNotNull('household_id')
-            ->whereHas('sectors', fn ($q) => $q->where('is_active', true)->whereIn('sector_type', $indicators))
-            ->with(['sectors' => fn ($q) => $q->where('is_active', true)->whereIn('sector_type', $indicators)])
-            ->get(['id', 'household_id']);
+        /*
+         * A household is counted ONCE per indicator, however many of its
+         * members carry it — which is what COUNT(DISTINCT household_id) says
+         * in one pass, rather than loading every flagged resident with their
+         * tags and walking the list six times.
+         */
+        $flagged = \App\Models\ResidentSector::query()
+            ->where('resident_sectors.is_active', true)
+            ->whereIn('resident_sectors.sector_type', $indicators)
+            ->join('residents', 'residents.id', '=', 'resident_sectors.resident_id')
+            ->where('residents.is_active', true)
+            ->where('residents.record_type', '!=', Resident::NON_RESIDENT)
+            ->whereNotNull('residents.household_id');
 
-        // Count each household once per indicator, however many members carry it.
+        $perIndicator = (clone $flagged)
+            ->selectRaw('resident_sectors.sector_type, COUNT(DISTINCT residents.household_id) as households')
+            ->groupBy('resident_sectors.sector_type')
+            ->pluck('households', 'sector_type');
+
+        /* Named in the order the office reads them, zeros included. */
         $byIndicator = [];
         foreach ($indicators as $indicator) {
-            $byIndicator[$indicator] = $rows
-                ->filter(fn ($r) => $r->sectors->contains('sector_type', $indicator))
-                ->pluck('household_id')
-                ->unique()
-                ->count();
+            $byIndicator[$indicator] = (int) ($perIndicator[$indicator] ?? 0);
         }
 
         return [
-            'households_flagged' => $rows->pluck('household_id')->unique()->count(),
+            'households_flagged' => (int) (clone $flagged)
+                ->distinct()->count('residents.household_id'),
             'by_indicator' => $byIndicator,
             'indicators' => $indicators,
         ];
     }
 
+    /**
+     * The sector lists, and how much of the barangay they actually cover.
+     *
+     * The page used to lead with the number of TAGS — 57 — which reads as a
+     * headcount and is not one: one person carries several, and one carried
+     * nine. So the counts come with the two numbers that make them
+     * legible: how many PEOPLE are on at least one list, and how many
+     * residents are on none.
+     *
+     * The second is the one worth acting on. A resident with no sector is
+     * not a resident with nothing to claim — it is usually one nobody has
+     * got to yet, and the office cannot see them any other way.
+     */
     public function getSectoralReport(Request $request)
     {
         $sectors = \App\Models\ResidentSector::where('is_active', true)
+            // A tag on a deleted or non-resident record is not a person the
+            // barangay serves, and would inflate every list.
+            ->whereHas('resident', fn ($q) => $q->bonafide()->where('is_active', true))
             ->groupBy('sector_type')
             ->selectRaw('sector_type, count(*) as count')
             ->orderByDesc('count')
             ->get();
 
-        return $this->success($sectors, 'Sectoral report retrieved');
+        $population = Resident::bonafide()->where('is_active', true)->count();
+
+        $tagged = Resident::bonafide()->where('is_active', true)
+            ->whereHas('sectors', fn ($q) => $q->where('is_active', true))
+            ->count();
+
+        return $this->success([
+            'sectors' => $sectors,
+            'population' => $population,
+            'people_on_a_list' => $tagged,
+            'people_on_no_list' => $population - $tagged,
+            'tags' => (int) $sectors->sum('count'),
+            'coverage' => $this->sectorCoverageByMonth(),
+        ], 'Sectoral report retrieved');
+    }
+
+    /**
+     * How many residents have been on a list, month by month.
+     *
+     * The only thing on this page that is a TREND, and so the only thing a
+     * line belongs on. The sector counts are thirteen unrelated categories —
+     * drawing a line from Youth to Adult to Child would join things that have
+     * no order, and imply a progression that does not exist.
+     *
+     * Counted from each person's FIRST tag, and accumulated: once somebody is
+     * on a list they stay counted, so the line only ever climbs. That is what
+     * makes it readable as coverage — "how much of the barangay have we got
+     * to" — rather than as monthly churn.
+     *
+     * Twelve months, in Manila time. A tag added at eight in the morning here
+     * is stored as midnight UTC, and bucketing in UTC would put a September
+     * enrolment in August.
+     */
+    private function sectorCoverageByMonth(): array
+    {
+        /*
+         * One row per person: the day they first appeared on any list. A
+         * later tag on somebody already counted must not raise the line
+         * again — that would count the person twice.
+         */
+        $firsts = \App\Models\ResidentSector::where('is_active', true)
+            ->whereHas('resident', fn ($q) => $q->bonafide()->where('is_active', true))
+            ->selectRaw('resident_id, MIN(enrolled_date) as started')
+            ->groupBy('resident_id')
+            ->pluck('started')
+            ->filter()
+            ->map(fn ($d) => substr((string) $d, 0, 7))
+            ->countBy();
+
+        $now = now(self::MANILA);
+        $months = [];
+        $running = 0;
+
+        for ($back = 11; $back >= 0; $back--) {
+            $month = $now->copy()->subMonths($back);
+            $key = $month->format('Y-m');
+
+            $running += (int) ($firsts[$key] ?? 0);
+
+            $months[] = [
+                'month' => $key,
+                'label' => $month->format('M'),
+                'joined' => (int) ($firsts[$key] ?? 0),
+                'on_a_list' => $running,
+            ];
+        }
+
+        /*
+         * Anybody whose first tag predates the window is already covered on
+         * day one, so the line starts where the barangay actually stood
+         * rather than at zero.
+         */
+        $earlier = $firsts->filter(
+            fn ($n, $key) => $key < $months[0]['month']
+        )->sum();
+
+        if ($earlier > 0) {
+            foreach ($months as $i => $row) {
+                $months[$i]['on_a_list'] = $row['on_a_list'] + $earlier;
+            }
+        }
+
+        return $months;
+    }
+
+    /**
+     * The headcount, month by month.
+     *
+     * Every other figure on this dashboard is a snapshot: fifty residents,
+     * ninety households, today. None of them says whether that fifty is
+     * growing, and a barangay planning a health post or a feeding programme
+     * is asking exactly that.
+     *
+     * Counted from the month each person was added to the register and then
+     * accumulated, so the line only ever climbs and reads as "how far the
+     * register has got" rather than as monthly churn. People who have since
+     * left are not carried: this is the register as it stands, laid out over
+     * the months it was built in.
+     */
+    private function registerByMonth(): array
+    {
+        $joined = Resident::bonafide()->where('is_active', true)
+            ->selectRaw("DATE_FORMAT(created_at, '%Y-%m') as month, COUNT(*) as count")
+            ->groupBy('month')
+            ->pluck('count', 'month');
+
+        $now = now(self::MANILA);
+        $months = [];
+        $running = 0;
+
+        for ($back = 11; $back >= 0; $back--) {
+            $month = $now->copy()->startOfMonth()->subMonths($back);
+            $key = $month->format('Y-m');
+            $added = (int) ($joined[$key] ?? 0);
+            $running += $added;
+
+            $months[] = [
+                'month' => $key,
+                'label' => $month->format('M'),
+                'added' => $added,
+                'on_the_register' => $running,
+            ];
+        }
+
+        /*
+         * Anybody registered before the window is already counted on day
+         * one, so the line starts where the barangay actually stood rather
+         * than at zero — and the last month equals the headcount in the tile
+         * above it.
+         */
+        $earlier = $joined->filter(fn ($n, $key) => $key < $months[0]['month'])->sum();
+
+        if ($earlier > 0) {
+            foreach ($months as $i => $row) {
+                $months[$i]['on_the_register'] = $row['on_the_register'] + $earlier;
+            }
+        }
+
+        return $months;
     }
 
     /* ------------------------------------------------------------------
@@ -627,6 +834,27 @@ class PopulationController extends BaseController
             // the emailed code.
             ->select(['id', 'name', 'email', 'role', 'office', 'is_active', 'activated_at', 'resident_id', 'created_at']);
 
+        /*
+         * Counted before the activation filter narrows it. Not statusCounts:
+         * there is no status column here — the two states are derived from
+         * whether the resident has entered their emailed code.
+         *
+         * The search below is applied first on purpose, so the chips describe
+         * the list actually on screen.
+         */
+        $counted = (clone $query);
+
+        if ($request->filled('search')) {
+            $term = $request->search;
+            $counted->where(fn ($q) => $q->where('name', 'like', "%{$term}%")
+                ->orWhere('email', 'like', "%{$term}%"));
+        }
+
+        $counts = [
+            'pending' => (clone $counted)->whereNull('activated_at')->count(),
+            'done' => (clone $counted)->whereNotNull('activated_at')->count(),
+        ];
+
         if ($request->filled('activation')) {
             $request->input('activation') === 'pending'
                 ? $query->whereNull('activated_at')
@@ -639,7 +867,10 @@ class PopulationController extends BaseController
                 ->orWhere('email', 'like', "%{$search}%"));
         }
 
-        return $this->success($query->latest()->paginate(20), 'Resident accounts retrieved');
+        return $this->success(
+            $query->latest()->paginate(20)->toArray() + ['counts' => $counts],
+            'Resident accounts retrieved'
+        );
     }
 
     public function toggleResidentAccount(User $user)
@@ -655,19 +886,44 @@ class PopulationController extends BaseController
         return $this->success($user, $user->is_active ? 'Account enabled' : 'Account disabled');
     }
 
-    private function getAgeGroupDistribution()
+    /**
+     * The five age bands, counted by the database.
+     *
+     * Today's date is passed in rather than left to the database's CURDATE():
+     * the barangay's day turns over in Manila, and a server keeping UTC would
+     * put an evening birthday into yesterday.
+     *
+     * A resident with no birthdate falls into no band at all — which is what
+     * the dependency figures call `unknown_age`, and is a different answer
+     * from being a baby.
+     */
+    private function getAgeGroupDistribution(): array
     {
-        $residents = Resident::bonafide()->where('is_active', true)->get(['birthdate']);
+        $today = now(self::MANILA)->toDateString();
+        $years = 'TIMESTAMPDIFF(YEAR, birthdate, ?)';
 
-        $age = fn ($r) => $r->birthdate ? $r->birthdate->age : null;
+        $counted = Resident::bonafide()->where('is_active', true)
+            ->whereNotNull('birthdate')
+            ->selectRaw(
+                "CASE
+                    WHEN {$years} <= 5 THEN '0-5 years'
+                    WHEN {$years} <= 12 THEN '6-12 years'
+                    WHEN {$years} <= 18 THEN '13-18 years'
+                    WHEN {$years} < 60 THEN '19-59 years'
+                    ELSE '60+ years'
+                END as band, COUNT(*) as total",
+                array_fill(0, 4, $today)
+            )
+            ->groupBy('band')
+            ->pluck('total', 'band');
 
-        return [
-            '0-5 years' => $residents->filter(fn ($r) => $age($r) !== null && $age($r) <= 5)->count(),
-            '6-12 years' => $residents->filter(fn ($r) => $age($r) !== null && $age($r) > 5 && $age($r) <= 12)->count(),
-            '13-18 years' => $residents->filter(fn ($r) => $age($r) !== null && $age($r) > 12 && $age($r) <= 18)->count(),
-            '19-59 years' => $residents->filter(fn ($r) => $age($r) !== null && $age($r) > 18 && $age($r) < 60)->count(),
-            '60+ years' => $residents->filter(fn ($r) => $age($r) !== null && $age($r) >= 60)->count(),
-        ];
+        /* Named in order, so an empty band is a 0 rather than a missing bar. */
+        $bands = ['0-5 years', '6-12 years', '13-18 years', '19-59 years', '60+ years'];
+
+        return array_combine(
+            $bands,
+            array_map(fn ($band) => (int) ($counted[$band] ?? 0), $bands)
+        );
     }
 
     private function getGenderDistribution()

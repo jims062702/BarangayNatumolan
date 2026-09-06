@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { FiActivity, FiAlertTriangle, FiHeart, FiSmile } from "react-icons/fi";
+import {  FiActivity, FiAlertTriangle, FiHeart, FiSmile , FiPlus } from "react-icons/fi";
 import { api } from "../../lib/api";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
@@ -8,6 +8,7 @@ import StatTile from "../../components/UI/StatTile";
 import StatusBadge from "../../components/UI/StatusBadge";
 import PageHeader from "../../components/UI/PageHeader";
 import type { ImmunizationRecord } from "../../types";
+import RevealGroup from "../../components/UI/RevealGroup";
 
 interface Coverage {
   total_visits: number;
@@ -46,19 +47,19 @@ export default function HealthStationDashboard() {
         actions={
           <Link
             to="/health/visits"
-            className="rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            Record a visit
+            <FiPlus className="h-4 w-4" aria-hidden="true" /> Record a visit
           </Link>
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <RevealGroup className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Visits Today" value={todayVisits} icon={FiActivity} />
         <StatTile label="Visits This Year" value={coverage?.total_visits ?? 0} icon={FiHeart} tone="success" />
         <StatTile label="Children Immunized" value={coverage?.total_immunized ?? 0} icon={FiSmile} tone="warning" />
         <StatTile label="Active Pregnancies" value={coverage?.total_prenatal ?? 0} icon={FiAlertTriangle} tone="danger" />
-      </div>
+      </RevealGroup>
 
       <div className="mt-6">
         <Card

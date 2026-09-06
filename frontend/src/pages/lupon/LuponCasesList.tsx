@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { FiArrowRight } from "react-icons/fi";
+import { FiArrowRight, FiPlus } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
@@ -15,6 +15,11 @@ import PhoneInput from "../../components/UI/PhoneInput";
 import ResidentPicker from "../../components/ResidentPicker";
 import ResidentMultiPicker from "../../components/ResidentMultiPicker";
 import type { LuponCase, Resident } from "../../types";
+import PeriodFilter, {
+  ALL_TIME,
+  periodParams,
+  type Period,
+} from "../../components/UI/PeriodFilter";
 
 const RELATIONSHIPS = ["Family", "Neighbor", "Business", "Friend", "Other"];
 
@@ -66,8 +71,15 @@ const CLASSIFICATIONS = [
 export default function LuponCasesList() {
   const navigate = useNavigate();
   const [rows, setRows] = useState<LuponCase[]>([]);
+
+  /* Which stretch of time the docket is showing. */
+  const [period, setPeriod] = useState<Period>(ALL_TIME);
+  const [windowLabel, setWindowLabel] = useState<string | null>(null);
+  const [years, setYears] = useState<number[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [blocked, setBlocked] = useState("");
 
@@ -91,10 +103,13 @@ export default function LuponCasesList() {
   const load = () => {
     setLoading(true);
     api
-      .get("/lupon/cases", { params: { page } })
+      .get("/lupon/cases", { params: { page, ...periodParams(period) } })
       .then((r) => {
         setRows(r.data.data.data ?? []);
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
+        setWindowLabel(r.data.data.window?.label ?? null);
+        setYears(r.data.data.years ?? []);
       })
       .finally(() => setLoading(false));
   };
@@ -102,7 +117,14 @@ export default function LuponCasesList() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+  }, [page, period]);
+
+  /* A narrower window almost never has as many pages, and page 4 of a
+     one-page result is an empty docket that looks like no cases at all. */
+  const changePeriod = (next: Period) => {
+    setPeriod(next);
+    setPage(1);
+  };
 
   // Live updates without a manual refresh.
   useAutoRefresh(load, REFRESH.staff);
@@ -175,9 +197,9 @@ export default function LuponCasesList() {
           <button
             type="button"
             onClick={() => setIntakeOpen(true)}
-            className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            + File complaint
+            <FiPlus className="h-4 w-4" aria-hidden="true" /> File complaint
           </button>
         }
       />
@@ -200,6 +222,14 @@ export default function LuponCasesList() {
         </Link>
         .
       </div>
+
+      <PeriodFilter
+        value={period}
+        onChange={changePeriod}
+        years={years}
+        showing={windowLabel}
+        count={total}
+      />
 
       <Card>
         <DataTable
@@ -254,6 +284,8 @@ export default function LuponCasesList() {
           ]}
           rows={rows}
           rowKey={(c) => c.id}
+          numbered
+          total={total}
           searchable
           searchPlaceholder="Search by case #, title, or party…"
           getSearchText={(c) =>

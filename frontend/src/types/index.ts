@@ -255,6 +255,15 @@ export interface Certificate {
   certificate_number: string;
   resident_id: number;
   service_request_id: number;
+  /**
+   * Just enough of the request behind it to say how it was asked for.
+   *
+   * Sent with the list because it decides what the clerk does with a
+   * finished certificate: somebody who walked in expects a call, and
+   * somebody who asked online may never open their portal to learn it is
+   * ready.
+   */
+  service_request?: { id: number; request_type: "Walk-in" | "Online" } | null;
   certificate_type: string;
   purpose?: string | null;
   /** Documentary requirements and whether each was presented at filing. */
@@ -322,20 +331,67 @@ export interface Appointment {
   notes?: string | null;
   cancellation_reason?: string | null;
   resident?: Resident | null;
+
+  /*
+   * What actually happened, as against what was booked.
+   *
+   * Separate from `status`: an appointment can be Completed with nobody
+   * present — the office did its part and the resident did not come — and
+   * one field cannot say both. Written by the secretary, so every one of
+   * these is absent until they have.
+   */
+  attendance?: "Awaiting" | "Present" | "Absent" | "Late" | null;
+  /** Times on the booked day, "HH:mm" or "HH:mm:ss" depending on the driver. */
+  started_at?: string | null;
+  ended_at?: string | null;
+  minutes?: string | null;
+  minuted_at?: string | null;
 }
 
+/**
+ * A post on News & Announcements.
+ *
+ * One row shape for five kinds of post — see lib/postKinds. Which of the
+ * optional fields are filled in depends on the kind, and the server clears
+ * the ones that do not belong to it, so a post changed from Event to
+ * Announcement cannot keep showing a stale venue.
+ */
 export interface Announcement {
   id: number;
   title: string;
   body: string;
+  /** One of the five kinds. Typed loosely because the server owns the list. */
   category: string;
-  location?: string | null;
-  event_at?: string | null;
-  event_time?: string | null;
+  /** The byline the barangay puts its name to — "SK Secretary". */
+  author_name?: string | null;
+  /** What to actually print: author_name, or the account that posted it. */
+  byline?: string | null;
+  /** One line for the card, so a card is not a truncated essay. */
+  excerpt?: string | null;
+  status: "Draft" | "Published" | "Archived";
   image_path?: string | null;
   image_url?: string | null;
-  is_published: boolean;
   published_at?: string | null;
+  sort_order?: number;
+
+  /** Event, Activity and Program all use a venue. */
+  location?: string | null;
+
+  /** Event. */
+  event_at?: string | null;
+  event_time?: string | null;
+  organizer?: string | null;
+  contact_info?: string | null;
+  registration_deadline?: string | null;
+
+  /** Activity. */
+  completed_at?: string | null;
+  participants?: string | null;
+
+  /** Advisory. */
+  effective_at?: string | null;
+  expires_at?: string | null;
+  urgency?: string | null;
 }
 
 export interface AppNotification {
@@ -351,6 +407,20 @@ export interface VawcCase {
   id: number;
   case_code: string;
   survivor_id: number;
+  /**
+   * How urgent the case is, in words. Null means nobody has judged it yet —
+   * which is its own state, and not the same as safe.
+   *
+   * Set at intake and re-stated by every follow-up, so the docket shows what
+   * was last seen rather than what was first assumed.
+   */
+  risk_level?: "Critical" | "High" | "Medium" | "Low" | null;
+  risk_assessed_at?: string | null;
+  /** How the complaint reached the barangay. */
+  reporting_channel?: string | null;
+  /** Sent with the list: the soonest visit due, and the last one made. */
+  next_followup_date?: string | null;
+  last_followup_date?: string | null;
   /** Who brought the complaint, when that is not the survivor herself. */
   reported_by_name?: string | null;
   reported_by_relationship?: string | null;

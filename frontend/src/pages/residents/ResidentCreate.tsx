@@ -6,7 +6,6 @@ import { toast } from "../../lib/toast";
 import { showServerFieldErrors } from "../../lib/formErrors";
 import { confirmAction } from "../../lib/confirm";
 import Card from "../../components/UI/Card";
-import Breadcrumbs from "../../components/UI/Breadcrumbs";
 import PageHeader from "../../components/UI/PageHeader";
 import NewHouseholdModal from "../../components/NewHouseholdModal";
 import FormField, { inputClasses } from "../../components/UI/FormField";
@@ -533,14 +532,12 @@ export default function ResidentCreate() {
 
   return (
     <div>
-      <Breadcrumbs
-        items={[
+      <PageHeader
+        crumbs={[
           { label: "Dashboard", to: "/dashboard" },
           { label: "Residents", to: "/residents" },
           { label: "Register Resident" },
         ]}
-      />
-      <PageHeader
         title={step === "preview" ? "Check before registering" : "Register Resident"}
         subtitle={
           step === "preview"

@@ -17,6 +17,15 @@ export default function ResidentAccounts() {
   const [activation, setActivation] = useState<"" | "pending" | "done">("");
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
+  /*
+   * How many sit under each chip. Of the whole list rather than the page,
+   * and unmoved by which chip is picked — otherwise the chosen one would
+   * read its total and every other would read zero, which is exactly the
+   * question the chips are there to answer.
+   */
+  const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
 
   const load = () => {
@@ -27,7 +36,9 @@ export default function ResidentAccounts() {
       })
       .then((r) => {
         setRows(r.data.data.data ?? []);
+        setCounts(r.data.data.counts ?? {});
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
       })
       .finally(() => setLoading(false));
   };
@@ -111,6 +122,9 @@ export default function ResidentAccounts() {
                 }`}
               >
                 {label}
+                {value && counts[value] ? (
+                  <span className="ml-1.5 opacity-70">{counts[value]}</span>
+                ) : null}
               </button>
             ))}
           </div>
@@ -181,6 +195,8 @@ export default function ResidentAccounts() {
           ]}
           rows={rows}
           rowKey={(u) => u.id}
+          numbered
+          total={total}
           loading={loading}
           emptyMessage="No portal accounts match this view."
           page={page}

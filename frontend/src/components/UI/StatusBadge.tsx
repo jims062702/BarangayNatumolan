@@ -1,4 +1,12 @@
 const STATUS_TONES: Record<string, string> = {
+  /*
+    News posts. Draft is deliberately the quietest of the three: it is the
+    one state where nothing has reached the public, and a page of loud
+    badges makes the one that IS live harder to find.
+  */
+  Draft: "bg-secondary text-gray-500",
+  Published: "bg-success/10 text-success",
+  Archived: "bg-gray text-gray-500",
   // Generic / requests
   Pending: "bg-warning/10 text-warning",
   "In Progress": "bg-primary/10 text-primary",

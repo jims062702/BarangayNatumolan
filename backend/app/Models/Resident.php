@@ -109,11 +109,88 @@ class Resident extends Model
         return $query->where('record_type', '!=', self::NON_RESIDENT);
     }
     /**
+     * What a resident may put down as their work.
+     *
+     * A list rather than a free box because the barangay counts these:
+     * "Carpenter", "carpenter" and "Karpentero" typed into an open field
+     * are three occupations to a report and one job to everybody else.
+     *
+     * Only the RESIDENT sets this, from their own portal. An office typing a
+     * neighbour's occupation is guessing, and the guess is what the barangay
+     * then plans a livelihood programme around.
+     */
+    /** Answered "no work", which is a different answer from never asked. */
+    public const NO_OCCUPATION = 'None';
+
+    /** Answered "something not on this list". */
+    public const OTHER_OCCUPATION = 'Others';
+
+    public const OCCUPATIONS = [
+        /*
+         * First, where a blank belongs. Somebody with no work should not have
+         * to read forty-one trades to say so.
+         */
+        self::NO_OCCUPATION,
+
+        'Accountant',
+        'Administrative Assistant',
+        'Alpander',
+        'Architect',
+        'Carpenter',
+        'Chef',
+        'Civil Engineer',
+        'Construction Worker',
+        'Content Writer',
+        'Cook',
+        'Cybersecurity Analyst',
+        'Data Analyst',
+        'Doctor',
+        'Electrician',
+        'Forklift Operator',
+        'Graphic Designer',
+        'Heavy Equipment Operator',
+        'Human Resources Specialist',
+        'HVAC Technician',
+        'IT Support Specialist',
+        'Karpintero',
+        'Librarian',
+        'Mason',
+        'Mechanical Engineer',
+        'Medical Laboratory Technician',
+        'Painter',
+        'Pharmacist',
+        'Physical Therapist',
+        'Physician',
+        'Plumber',
+        'Project Manager',
+        'Registered Nurse',
+        'Roofer',
+        'Scaffolder',
+        'School Counselor',
+        'Social Worker',
+        'Software Engineer',
+        'Teacher',
+        'Truck Driver',
+        'Video Editor',
+        'Welder',
+
+        /* Last, because you only reach it having failed to find your own. */
+        self::OTHER_OCCUPATION,
+    ];
+
+    /**
      * The age-derived sector tags the system manages automatically. The
      * `residents:sync-sectors` command reconciles ONLY these; manual tags
-     * (Solo Parent, PWD, 4Ps, …) are left untouched.
+     * (Solo Parent, PWD, 4Ps, Indigent) are left untouched.
+     *
+     * Children Under Five is one of these and not a manual tag: it is a fact
+     * about a birthdate. Left to be added and removed by hand, the under-five
+     * list fills with six-year-olds nobody remembered to take off, and misses
+     * the babies born since anybody last went through the register.
      */
-    public const AGE_SECTORS = ['Child', 'Youth', 'Adult', 'Senior Citizen'];
+    public const AGE_SECTORS = [
+        'Children Under Five', 'Child', 'Youth', 'Adult', 'Senior Citizen',
+    ];
 
     /**
      * Name/number lookup used by every resident search in the system.
@@ -176,11 +253,27 @@ class Resident extends Model
             : SequenceNumber::next('residents', 'resident_number', $year . '-', 6);
     }
 
+    /**
+     * Every age bracket this resident is currently in.
+     *
+     * More than one on purpose. A three-year-old is a Child AND one of the
+     * children under five, and a sixteen-year-old is a Child under RA 7610
+     * and Youth under RA 8044 at the same time — the two laws overlap, and a
+     * register that picked one would leave somebody off a list they are
+     * entitled to be on.
+     *
+     * Senior Citizen carries no registration state. Whether they have their
+     * OSCA card is a separate answer the census asks (Q31); the bracket is
+     * only about the birthday.
+     */
     public function ageSectors(): array
     {
         $age = $this->birthdate?->age;
         if ($age === null) {
             return [];
+        }
+        if ($age < 5) {
+            return ['Children Under Five', 'Child'];
         }
         if ($age <= 14) {
             return ['Child'];

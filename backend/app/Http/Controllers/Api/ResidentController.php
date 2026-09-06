@@ -254,7 +254,11 @@ class ResidentController extends BaseController
             'birthdate' => 'required|date',
             'birth_place' => 'nullable|string|max:150',
             'civil_status' => 'nullable|string',
-            'occupation' => 'nullable|string',
+            /*
+             * Not here. A resident sets their own occupation from the portal;
+             * an office typing a neighbour's is a guess, and the guess is
+             * what a livelihood programme gets planned around.
+             */
             'contact_number' => 'nullable|string',
             // Email is optional, but must be unique because it becomes the
             // resident's portal login the moment the record is created.
@@ -870,7 +874,7 @@ class ResidentController extends BaseController
             'gender' => 'in:Male,Female,Other',
             'birthdate' => 'date',
             'civil_status' => 'nullable|string',
-            'occupation' => 'nullable|string',
+            /* The resident's own — see the note on store(). */
             'contact_number' => 'nullable|string',
             'email' => ['nullable', 'email', Rule::unique('residents', 'email')->ignore($resident->id)],
             'household_id' => 'nullable|exists:households,id',

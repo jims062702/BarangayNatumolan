@@ -4,6 +4,8 @@ import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import { useAuth } from "../../contexts/AuthContext";
+import { FiArchive, FiCheck, FiEdit2, FiRotateCcw, FiTrash2, FiPlus } from "react-icons/fi";
+import RowAction, { RowActions } from "../../components/UI/RowAction";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import Modal from "../../components/UI/Modal";
@@ -57,6 +59,8 @@ export default function AdministrativeRecords() {
   const [rows, setRows] = useState<AdministrativeRecord[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
 
@@ -73,6 +77,7 @@ export default function AdministrativeRecords() {
       .then((r) => {
         setRows(r.data.data.data ?? []);
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
       })
       .finally(() => setLoading(false));
   };
@@ -206,9 +211,9 @@ export default function AdministrativeRecords() {
           <button
             type="button"
             onClick={openCreate}
-            className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            + File document
+            <FiPlus className="h-4 w-4" aria-hidden="true" /> File document
           </button>
         }
       />
@@ -260,48 +265,40 @@ export default function AdministrativeRecords() {
             {
               header: "Actions",
               render: (r: AdministrativeRecord) => (
-                <div className="flex flex-wrap gap-1.5">
+                <RowActions>
                   {!r.approved_at && (
-                    <button
-                      type="button"
-                      onClick={() => openEdit(r)}
-                      className="cursor-pointer rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
-                    >
-                      Edit
-                    </button>
+                    <RowAction label="Edit record" icon={FiEdit2} onClick={() => openEdit(r)} />
                   )}
                   {!r.approved_at && isPunongBarangay && (
-                    <button
-                      type="button"
+                    <RowAction
+                      label="Approve record"
+                      icon={FiCheck}
+                      tone="primary"
                       onClick={() => approve(r)}
-                      className="cursor-pointer rounded-full bg-success px-3 py-1 text-xs font-semibold text-white hover:opacity-90"
-                    >
-                      Approve
-                    </button>
+                    />
                   )}
                   {/* Adopted documents are archived, never deleted. */}
                   {!r.approved_at && (
-                    <button
-                      type="button"
+                    <RowAction
+                      label="Delete record"
+                      icon={FiTrash2}
+                      tone="danger"
                       onClick={() => remove(r)}
-                      className="cursor-pointer rounded-full border border-danger/40 px-3 py-1 text-xs font-semibold text-danger transition-colors hover:bg-danger hover:text-white"
-                    >
-                      Delete
-                    </button>
+                    />
                   )}
-                  <button
-                    type="button"
+                  <RowAction
+                    label={r.is_archived ? "Restore record" : "Archive record"}
+                    icon={r.is_archived ? FiRotateCcw : FiArchive}
                     onClick={() => toggleArchive(r)}
-                    className="cursor-pointer rounded-full border border-gray px-3 py-1 text-xs font-semibold text-gray-500 transition-colors hover:border-dark hover:text-dark"
-                  >
-                    {r.is_archived ? "Restore" : "Archive"}
-                  </button>
-                </div>
+                  />
+                </RowActions>
               ),
             },
           ]}
           rows={rows}
           rowKey={(r) => r.id}
+          numbered
+          total={total}
           searchable
           searchPlaceholder="Search by number, title or summary…"
           getSearchText={(r) =>

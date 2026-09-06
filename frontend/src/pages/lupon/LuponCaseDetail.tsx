@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { FiArrowLeft } from "react-icons/fi";
+import { FiArrowLeft, FiPlus } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
@@ -331,7 +331,7 @@ export default function LuponCaseDetail() {
           title="Hearings & summons"
           action={
             <button type="button" onClick={() => setHearingOpen(true)} className="cursor-pointer text-sm font-medium text-primary hover:underline">
-              + Schedule
+              <FiPlus className="h-4 w-4" aria-hidden="true" /> Schedule
             </button>
           }
         >
@@ -377,7 +377,7 @@ export default function LuponCaseDetail() {
           action={
             !settlement && (
               <button type="button" onClick={() => setSettlementOpen(true)} className="cursor-pointer text-sm font-medium text-primary hover:underline">
-                + Record
+                <FiPlus className="h-4 w-4" aria-hidden="true" /> Record
               </button>
             )
           }

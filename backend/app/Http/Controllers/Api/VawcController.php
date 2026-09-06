@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Support\DateWindow;
 use App\Support\SequenceNumber;
 
 use App\Models\VawcAccessLog;
@@ -28,10 +29,70 @@ class VawcController extends BaseController
         if ($request->filled('violence_type')) {
             $query->where('violence_type', $request->violence_type);
         }
+        if ($request->filled('risk_level')) {
+            $query->where('risk_level', $request->risk_level);
+        }
 
-        $cases = $query->orderBy('report_date', 'desc')->paginate(20);
+        /*
+         * The period, worked out in Philippine time.
+         *
+         * report_date carries a clock, so the window is converted to UTC
+         * before it meets the column — a Manila day runs from 16:00 the
+         * previous day in the stored values.
+         */
+        $window = DateWindow::fromRequest($request);
+        $window?->applyTo($query, 'report_date');
 
-        return $this->success($cases, 'VAWC cases retrieved');
+        /*
+         * Most urgent first, and only then most recent.
+         *
+         * A docket sorted by date alone buries a Critical case from March
+         * under a Low one filed this morning — and the whole reason the
+         * office opens this page is to find out who to see first. MySQL has
+         * no order for the enum's words, so the order is stated.
+         */
+        $cases = $query
+            ->orderByRaw("FIELD(risk_level, 'Critical', 'High', 'Medium', 'Low') ASC")
+            ->orderBy('report_date', 'desc')
+            ->paginate(20);
+
+        /*
+         * When each is next due, and when it was last touched.
+         *
+         * Loaded for the page rather than per row: twenty cases would
+         * otherwise be twenty extra queries, and a docket that is slow to
+         * open is a docket nobody opens.
+         */
+        $ids = $cases->getCollection()->pluck('id');
+
+        $nextDue = VawcFollowup::whereIn('vawc_case_id', $ids)
+            ->whereNotNull('next_followup_date')
+            ->selectRaw('vawc_case_id, MIN(next_followup_date) as due')
+            ->groupBy('vawc_case_id')
+            ->pluck('due', 'vawc_case_id');
+
+        $lastSeen = VawcFollowup::whereIn('vawc_case_id', $ids)
+            ->selectRaw('vawc_case_id, MAX(followup_date) as seen')
+            ->groupBy('vawc_case_id')
+            ->pluck('seen', 'vawc_case_id');
+
+        $cases->getCollection()->transform(function (VawcCase $case) use ($nextDue, $lastSeen) {
+            $case->next_followup_date = $nextDue[$case->id] ?? null;
+            $case->last_followup_date = $lastSeen[$case->id] ?? null;
+
+            return $case;
+        });
+
+        /*
+         * The window goes back with the rows so the page can say which one it
+         * is showing, and the years so the dropdown offers only years that
+         * have cases in them.
+         */
+        $payload = $cases->toArray();
+        $payload['window'] = $window?->toArray();
+        $payload['years'] = DateWindow::yearsFrom(VawcCase::min('report_date'));
+
+        return $this->success($payload, 'VAWC cases retrieved');
     }
 
     public function store(Request $request)
@@ -53,19 +114,81 @@ class VawcController extends BaseController
             'dependent_ids' => 'nullable|array',
             'dependent_ids.*' => 'integer|exists:residents,id',
             'children_details' => 'nullable|string',
-            'immediate_needs' => 'nullable|string',
+            /*
+             * Needs as a list rather than a paragraph.
+             *
+             * Free text could not be counted, so nobody could answer "how
+             * many survivors this quarter needed shelter?" — which is the
+             * question a barangay budget is built on. Stored in the same
+             * encrypted column: what somebody needs says what happened to
+             * them.
+             */
+            'immediate_needs' => 'nullable|array',
+            'immediate_needs.*' => 'string|max:120',
+            'immediate_needs_other' => 'nullable|string|max:255',
             'previous_incidents_count' => 'integer|min:0',
             'confidential_notes' => 'nullable|string',
             'incident_narrative' => 'nullable|string',
+            /*
+             * When and where it happened, and whether it still is.
+             *
+             * The form recorded only when the complaint was MADE. A
+             * prescription period runs from the act, and an officer deciding
+             * whether to go out tonight needs to know whether the person
+             * complained of is in the house right now.
+             */
+            'occurred_at' => 'nullable|date|before_or_equal:' . self::manilaNow(),
+            'incident_location' => 'nullable|string|max:255',
+            'is_ongoing' => 'nullable|boolean',
+            'offender_nearby' => 'nullable|boolean',
+            'risk_level' => 'nullable|in:' . implode(',', VawcCase::RISK_LEVELS),
+            'reporting_channel' => 'nullable|string|max:60',
             // A case is often encoded after the fact, so the desk may set the
             // actual date and time the complaint was made — never the future.
             'report_date' => 'nullable|date|before_or_equal:' . self::manilaNow(),
         ], [
             'report_date.before_or_equal' => 'The complaint cannot be reported in the future.',
+            'occurred_at.before_or_equal' => 'The incident cannot have happened in the future.',
         ]);
 
         $narrative = $validated['incident_narrative'] ?? null;
-        unset($validated['incident_narrative']);
+
+        /*
+         * The incident's own facts go on the incident, not the case: a case
+         * outlives one night, and a second incident on the same case has its
+         * own when and where.
+         */
+        $incident = [
+            /* Posted as Manila wall time by the form; stored as UTC like
+               everything else the app writes with now(). */
+            'occurred_at' => isset($validated['occurred_at'])
+                ? DateWindow::manilaToUtc($validated['occurred_at'])
+                : null,
+            'location' => $validated['incident_location'] ?? null,
+            'is_ongoing' => $validated['is_ongoing'] ?? null,
+            'offender_nearby' => $validated['offender_nearby'] ?? null,
+        ];
+
+        unset(
+            $validated['incident_narrative'],
+            $validated['occurred_at'],
+            $validated['incident_location'],
+            $validated['is_ongoing'],
+            $validated['offender_nearby'],
+        );
+
+        /*
+         * The needs list, kept as text in the encrypted column it already
+         * lived in. "Other" is appended rather than dropped: a need nobody
+         * anticipated is exactly the one worth reading.
+         */
+        $needs = collect($validated['immediate_needs'] ?? [])->filter()->values();
+        $other = trim((string) ($validated['immediate_needs_other'] ?? ''));
+
+        if ($other !== '') { $needs->push('Other: ' . $other); }
+        unset($validated['immediate_needs_other']);
+
+        $validated['immediate_needs'] = $needs->isEmpty() ? null : $needs->join("\n");
 
         $dependentIds = collect($validated['dependent_ids'] ?? [])->unique()->values();
         unset($validated['dependent_ids']);
@@ -74,14 +197,34 @@ class VawcController extends BaseController
         $validated['children_involved'] = $dependentIds->isNotEmpty();
 
         $validated['case_code'] = $this->generateCaseCode();
-        $validated['report_date'] = $validated['report_date'] ?? now();
+        /*
+         * Manila in, UTC stored.
+         *
+         * The form posts the clerk's own wall clock and the validation checks
+         * it against Manila's — but the column is UTC, which is what now()
+         * writes on the line this replaces. Storing the Manila string verbatim
+         * put those two eight hours apart in the same column.
+         */
+        $validated['report_date'] = isset($validated['report_date'])
+            ? DateWindow::manilaToUtc($validated['report_date'])
+            : now();
         $validated['assigned_vawc_officer'] = auth()->id();
+
+        // When the level was judged, so a stale assessment is visibly stale.
+        if (!empty($validated['risk_level'])) {
+            $validated['risk_assessed_at'] = now();
+        }
 
         $case = VawcCase::create($validated);
         $case->dependents()->sync($dependentIds);
 
-        if ($narrative) {
-            $case->incidents()->create([
+        /*
+         * An incident row is written whenever ANY of it was answered — not
+         * only when a narrative was typed. "He is in the house right now"
+         * with no narrative is still the most important thing on the form.
+         */
+        if ($narrative || array_filter($incident, fn ($v) => $v !== null)) {
+            $case->incidents()->create($incident + [
                 'incident_narrative' => $narrative,
                 'is_confidential' => true,
             ]);
@@ -89,7 +232,17 @@ class VawcController extends BaseController
 
         VawcAccessLog::record($case->id, 'created', 'Case intake');
 
-        return $this->success($case->load('dependents:id,first_name,middle_name,last_name,resident_number'), 'VAWC case created', 201);
+        /*
+         * Reloaded, so the reply carries every column and not only the ones
+         * that happened to be filled in. A caller reading risk_level should
+         * get null when nothing was assessed — not find the key missing and
+         * have to guess what that means.
+         */
+        return $this->success(
+            $case->fresh()->load('dependents:id,first_name,middle_name,last_name,resident_number'),
+            'VAWC case created',
+            201
+        );
     }
 
     public function show(VawcCase $case)
@@ -219,6 +372,16 @@ class VawcController extends BaseController
         ]);
 
         $followup = $case->followups()->create($validated + ['recorded_by' => auth()->id()]);
+
+        /*
+         * And the docket's risk level moves with it.
+         *
+         * Without this the list would show, a year on, the level somebody
+         * assessed on the first day — which is worse than showing nothing,
+         * because it looks current. See VawcCase::RISK_FROM_SAFETY for why
+         * "Unknown" deliberately moves nothing.
+         */
+        $case->reassessRiskFrom($validated['safety_status'], $validated['followup_date']);
 
         VawcAccessLog::record($case->id, 'followup_recorded', $validated['safety_status']);
 

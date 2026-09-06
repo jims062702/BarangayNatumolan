@@ -41,6 +41,33 @@ class BaseController extends Controller
     /**
      * Send success response
      */
+    /**
+     * How many rows sit under each status, for the chips above a list.
+     *
+     * The chips are read to decide where to go next — "is there anything in
+     * Rejected?" — so the number has to be the whole list's, not the page's.
+     *
+     * Counted from the query WITHOUT its own status filter, which is the
+     * whole trick: filter first and every chip but the chosen one reports
+     * zero, which is precisely the question the chips exist to answer. Every
+     * OTHER filter still applies, so the counts describe the list actually
+     * being looked at.
+     *
+     * Pass the query BEFORE the status `where` is added.
+     */
+    protected function statusCounts($query, string $column = 'status'): array
+    {
+        return (clone $query)
+            // A paginator's ORDER BY has no place in a GROUP BY, and MySQL in
+            // strict mode refuses the combination outright.
+            ->reorder()
+            ->getQuery()
+            ->select($column, \Illuminate\Support\Facades\DB::raw('COUNT(*) as total'))
+            ->groupBy($column)
+            ->pluck('total', $column)
+            ->map(fn ($n) => (int) $n)
+            ->all();
+    }
     public function success($data = null, $message = 'Success', $code = 200)
     {
         return response()->json([

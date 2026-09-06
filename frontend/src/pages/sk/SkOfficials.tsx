@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { FiPlus } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
@@ -8,6 +9,7 @@ import Modal from "../../components/UI/Modal";
 import PageHeader from "../../components/UI/PageHeader";
 import FormField, { inputClasses } from "../../components/UI/FormField";
 import type { Official } from "../../types";
+import { CardGridSkeleton } from "../../components/UI/Skeleton";
 
 type Group = "Barangay" | "SK";
 
@@ -192,15 +194,15 @@ export default function SkOfficials() {
           <button
             type="button"
             onClick={openAdd}
-            className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            + Add official
+            <FiPlus className="h-4 w-4" aria-hidden="true" /> Add official
           </button>
         }
       />
 
       {loading ? (
-        <p className="py-10 text-center text-sm text-gray-400">Loading…</p>
+        <CardGridSkeleton cards={2} height={200} />
       ) : (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {renderGroup("Barangay")}

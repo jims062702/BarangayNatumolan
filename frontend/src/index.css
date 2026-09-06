@@ -203,3 +203,116 @@ section[id] {
   border-radius: 9999px;
   background: var(--color-primary);
 }
+
+/*
+  The scroll-reveal every dashboard wears.
+
+  Same movement as the public site — a fade and a 24px rise, easing out over
+  half a second — but driven by an IntersectionObserver and these two classes
+  instead of an animation library, so a dashboard does not download 127kB to
+  fade a card in. See hooks/useReveal.ts.
+
+  `will-change` is deliberately absent: it would promote every card on the
+  page to its own compositor layer, and a dashboard has thirty of them.
+*/
+.reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition:
+    opacity 0.5s ease-out,
+    transform 0.5s ease-out;
+}
+
+.reveal-in {
+  opacity: 1;
+  transform: none;
+}
+
+/*
+  Somebody who has asked their system for less motion gets the content and
+  none of the movement. Written as a plain override rather than as a check in
+  the code, so a card is never left at opacity 0 by a race.
+*/
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .reveal-in {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/*
+  The bubble that introduces the chat button.
+
+  It rises the last few pixels as it fades in, so it reads as arriving rather
+  than as having been there all along and only just noticed — which is the
+  whole point of it.
+*/
+@keyframes chat-hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.chat-hint {
+  animation: chat-hint-in 0.4s ease-out both;
+}
+
+/*
+  The three dots a chat shows before it speaks.
+
+  Staggered by an inline delay per dot, so the wave runs left to right. The
+  dip is small: this sits over page content, and a bouncing badge in the
+  corner of the eye is harder to ignore than it is to read.
+*/
+@keyframes chat-dot {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+
+.chat-dot {
+  animation: chat-dot 1.2s ease-in-out infinite;
+}
+
+/* The caret, which only exists while a line is still being written. */
+@keyframes chat-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.chat-caret {
+  animation: chat-caret 0.9s step-end infinite;
+}
+
+/*
+  Somebody who has asked their system for less motion gets the words and none
+  of the movement. The typing itself is skipped in the component; these are
+  the loops that would otherwise keep running.
+*/
+@media (prefers-reduced-motion: reduce) {
+  .chat-hint,
+  .chat-dot,
+  .chat-caret {
+    animation: none;
+  }
+}

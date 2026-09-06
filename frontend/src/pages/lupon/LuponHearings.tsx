@@ -1,11 +1,15 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { FiAlertCircle, FiCalendar, FiCheckCircle, FiMail } from "react-icons/fi";
+import {
+  FiAlertCircle, FiCalendar, FiCheckCircle, FiCheckSquare,
+  FiFileText, FiMail, FiRotateCcw, FiSend,
+} from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { formatWallClock } from "../../lib/datetime";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import RowAction, { RowActions } from "../../components/UI/RowAction";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import Modal from "../../components/UI/Modal";
@@ -34,6 +38,8 @@ export default function LuponHearings() {
   const [rows, setRows] = useState<LuponHearing[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
   // Summons / proof of service
@@ -65,6 +71,7 @@ export default function LuponHearings() {
       .then((r) => {
         setRows(r.data.data.data ?? []);
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
       })
       .finally(() => setLoading(false));
   };
@@ -287,45 +294,36 @@ export default function LuponHearings() {
             {
               header: "Actions",
               render: (h: LuponHearing) => (
-                <div className="flex flex-wrap gap-1.5">
+                <RowActions>
                   {h.status === "Scheduled" && (
                     <>
-                      <button
-                        type="button"
+                      <RowAction
+                        label="Record summons"
+                        icon={FiSend}
                         onClick={() => openSummons(h)}
-                        className="cursor-pointer rounded-full border border-gray px-3 py-1 text-xs font-semibold text-gray-500 transition-colors hover:border-primary hover:text-primary"
-                      >
-                        Summons
-                      </button>
-                      <button
-                        type="button"
+                      />
+                      <RowAction
+                        label="Record the outcome"
+                        icon={FiCheckSquare}
+                        tone="primary"
                         onClick={() => openOutcome(h)}
-                        className="cursor-pointer rounded-full bg-primary px-3 py-1 text-xs font-semibold text-white hover:bg-primary-dark"
-                      >
-                        Outcome
-                      </button>
-                      <button
-                        type="button"
+                      />
+                      <RowAction
+                        label="Reschedule"
+                        icon={FiRotateCcw}
                         onClick={() => openReset(h)}
-                        className="cursor-pointer rounded-full border border-warning/40 px-3 py-1 text-xs font-semibold text-warning transition-colors hover:bg-warning hover:text-white"
-                      >
-                        Reset
-                      </button>
+                      />
                     </>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => openForms(h)}
-                    className="cursor-pointer rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
-                  >
-                    KP forms
-                  </button>
-                </div>
+                  <RowAction label="KP forms" icon={FiFileText} onClick={() => openForms(h)} />
+                </RowActions>
               ),
             },
           ]}
           rows={rows}
           rowKey={(h) => h.id}
+          numbered
+          total={total}
           searchable
           searchPlaceholder="Search by case number, title or type…"
           getSearchText={(h) =>

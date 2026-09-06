@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { FiBell, FiHelpCircle, FiSettings, FiUserPlus, FiUsers } from "react-icons/fi";
+import { FiBell, FiSettings, FiUserPlus, FiUsers } from "react-icons/fi";
 import { api } from "../../lib/api";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
 import StatTile from "../../components/UI/StatTile";
 import PageHeader from "../../components/UI/PageHeader";
 import type { User } from "../../types";
+import RevealGroup from "../../components/UI/RevealGroup";
 
 export default function AdminDashboard() {
   const [totalUsers, setTotalUsers] = useState(0);
@@ -42,19 +43,19 @@ export default function AdminDashboard() {
         actions={
           <Link
             to="/admin/users"
-            className="rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            Manage users
+            <FiUsers className="h-4 w-4" aria-hidden="true" /> Manage users
           </Link>
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <RevealGroup className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Total Accounts" value={totalUsers} icon={FiUsers} />
         <StatTile label="Staff Accounts (page)" value={staffCount} icon={FiSettings} tone="success" />
         <StatTile label="Resident Portal Accounts" value={portalAccounts} icon={FiUserPlus} tone="warning" />
         <StatTile label="Deactivated (page)" value={inactive} icon={FiBell} tone="danger" />
-      </div>
+      </RevealGroup>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <Card title="Administration shortcuts">
@@ -63,7 +64,6 @@ export default function AdminDashboard() {
               { to: "/admin/users", label: "User Accounts", icon: FiSettings },
               { to: "/population/accounts", label: "Portal Accounts", icon: FiUserPlus },
               { to: "/manage/announcements", label: "Announcements", icon: FiBell },
-              { to: "/manage/service-guides", label: "Service Guides", icon: FiHelpCircle },
             ].map((item) => (
               <Link
                 key={item.to}

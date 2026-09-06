@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { FiPlus } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
@@ -8,6 +9,7 @@ import Modal from "../../components/UI/Modal";
 import PageHeader from "../../components/UI/PageHeader";
 import FormField, { inputClasses } from "../../components/UI/FormField";
 import type { HeroSlide } from "../../types";
+import { CardGridSkeleton } from "../../components/UI/Skeleton";
 
 export default function SkHeroSlides() {
   const [slides, setSlides] = useState<HeroSlide[]>([]);
@@ -119,15 +121,15 @@ export default function SkHeroSlides() {
           <button
             type="button"
             onClick={openAdd}
-            className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            + Add picture
+            <FiPlus className="h-4 w-4" aria-hidden="true" /> Add picture
           </button>
         }
       />
 
       {loading && slides.length === 0 ? (
-        <p className="py-10 text-center text-sm text-gray-400">Loading…</p>
+        <CardGridSkeleton cards={2} height={180} />
       ) : slides.length === 0 ? (
         <Card>
           <p className="py-10 text-center text-sm text-gray-400">

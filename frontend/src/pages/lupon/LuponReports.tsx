@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { FiAlertTriangle, FiCalendar, FiCheckCircle, FiFolder } from "react-icons/fi";
+import {  FiAlertTriangle, FiCalendar, FiCheckCircle, FiFolder , FiPrinter } from "react-icons/fi";
 import { api } from "../../lib/api";
 import { formatWallClock } from "../../lib/datetime";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
@@ -11,6 +11,7 @@ import StatusBadge from "../../components/UI/StatusBadge";
 import PageHeader from "../../components/UI/PageHeader";
 import { inputClasses } from "../../components/UI/FormField";
 import type { LuponCase, LuponHearing, LuponSettlement } from "../../types";
+import RevealGroup from "../../components/UI/RevealGroup";
 
 interface MonthlyReport {
   month: string | number;
@@ -150,15 +151,15 @@ export default function LuponReports() {
             <button
               type="button"
               onClick={() => window.print()}
-              className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+              className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
             >
-              Print transmittal
+              <FiPrinter className="h-4 w-4" aria-hidden="true" /> Print transmittal
             </button>
           </>
         }
       />
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <RevealGroup className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="Cases filed" value={report?.cases_filed ?? 0} icon={FiFolder} />
         <StatTile
           label="Cases settled"
@@ -174,7 +175,7 @@ export default function LuponReports() {
           tone="success"
           hint={`${MONTHS[Number(month) - 1]} ${year}`}
         />
-      </div>
+      </RevealGroup>
 
       <div className="mb-6 grid gap-6 lg:grid-cols-2">
         <Card title="Monthly transmittal">
@@ -302,6 +303,8 @@ export default function LuponReports() {
           ]}
           rows={archive}
           rowKey={(c) => c.id}
+          numbered
+          total={archive.length}
           searchable
           searchPlaceholder="Search closed cases by number, title or classification…"
           getSearchText={(c) => `${c.case_number} ${c.case_title} ${c.case_classification}`}

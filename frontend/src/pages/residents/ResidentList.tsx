@@ -17,16 +17,18 @@ import type { Resident } from "../../types";
 
 const PUROKS = ["Purok 1", "Purok 2", "Purok 3", "Purok 4", "Purok 5"];
 const GENDERS = ["Male", "Female", "Other"];
+/* The lists this barangay keeps — the age brackets it works out, and the
+   four statuses somebody has to grant, judge or register. */
 const SECTORS = [
+  "Children Under Five",
+  "Child",
+  "Youth",
+  "Adult",
   "Senior Citizen",
   "PWD",
   "Solo Parent",
-  "Youth",
-  "Children Under Five",
-  "Pregnant Women",
   "4Ps Household",
-  "Unemployed",
-  "Informal Worker",
+  "Indigent",
 ];
 
 const filterSelect =

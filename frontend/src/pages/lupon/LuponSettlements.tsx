@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { FiAlertTriangle, FiCheckCircle, FiClock, FiFileText } from "react-icons/fi";
+import { FiAlertTriangle, FiCheckCircle, FiClock, FiEdit2, FiFileText } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import RowAction, { RowActions } from "../../components/UI/RowAction";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import Modal from "../../components/UI/Modal";
@@ -13,6 +14,7 @@ import StatusBadge from "../../components/UI/StatusBadge";
 import PageHeader from "../../components/UI/PageHeader";
 import FormField, { inputClasses } from "../../components/UI/FormField";
 import type { LuponSettlement } from "../../types";
+import RevealGroup from "../../components/UI/RevealGroup";
 
 const STATUSES = [
   "Within Repudiation Period",
@@ -99,6 +101,8 @@ export default function LuponSettlements() {
   const [rows, setRows] = useState<LuponSettlement[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [dueOnly, setDueOnly] = useState(false);
 
@@ -113,6 +117,7 @@ export default function LuponSettlements() {
       .then((r) => {
         setRows(r.data.data.data ?? []);
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
       })
       .finally(() => setLoading(false));
   };
@@ -194,12 +199,12 @@ export default function LuponSettlements() {
         finalized automatically when this register is opened.
       </div>
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <RevealGroup className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="In repudiation window" value={inWindow} icon={FiClock} tone="warning" />
         <StatTile label="Compliance overdue" value={overdue} icon={FiAlertTriangle} tone="danger" />
         <StatTile label="Complied / executed" value={complied} icon={FiCheckCircle} tone="success" />
         <StatTile label="CFA / CBA issued" value={certificates} icon={FiFileText} />
-      </div>
+      </RevealGroup>
 
       <Card>
         <label className="mb-4 flex w-fit cursor-pointer items-center gap-2 text-sm text-dark">
@@ -297,18 +302,16 @@ export default function LuponSettlements() {
             {
               header: "Actions",
               render: (s: LuponSettlement) => (
-                <button
-                  type="button"
-                  onClick={() => open(s)}
-                  className="cursor-pointer rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
-                >
-                  Manage
-                </button>
+                <RowActions>
+                  <RowAction label="Manage settlement" icon={FiEdit2} onClick={() => open(s)} />
+                </RowActions>
               ),
             },
           ]}
           rows={rows}
           rowKey={(s) => s.id}
+          numbered
+          total={total}
           searchable
           searchPlaceholder="Search by case number, party, title or terms…"
           getSearchText={(s) =>

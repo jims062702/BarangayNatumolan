@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { FiPlus } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
@@ -129,9 +130,9 @@ export default function PortalRequests() {
           <button
             type="button"
             onClick={() => setCreateOpen(true)}
-            className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            + Request a certificate
+            <FiPlus className="h-4 w-4" aria-hidden="true" /> Request a certificate
           </button>
         }
       />

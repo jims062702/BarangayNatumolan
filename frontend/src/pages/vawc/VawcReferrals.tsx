@@ -4,6 +4,8 @@ import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { FiEdit2 } from "react-icons/fi";
+import RowAction, { RowActions } from "../../components/UI/RowAction";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import Modal from "../../components/UI/Modal";
@@ -46,6 +48,8 @@ export default function VawcReferrals() {
   const [rows, setRows] = useState<VawcReferral[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [dueOnly, setDueOnly] = useState(false);
 
@@ -62,6 +66,7 @@ export default function VawcReferrals() {
       .then((r) => {
         setRows(r.data.data.data ?? []);
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
       })
       .finally(() => setLoading(false));
   };
@@ -182,18 +187,16 @@ export default function VawcReferrals() {
             {
               header: "Actions",
               render: (r: VawcReferral) => (
-                <button
-                  type="button"
-                  onClick={() => openEdit(r)}
-                  className="cursor-pointer rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
-                >
-                  Update
-                </button>
+                <RowActions>
+                  <RowAction label="Update referral" icon={FiEdit2} onClick={() => openEdit(r)} />
+                </RowActions>
               ),
             },
           ]}
           rows={rows}
           rowKey={(r) => r.id}
+          numbered
+          total={total}
           searchable
           searchPlaceholder="Search by case code, agency or service…"
           getSearchText={(r) =>

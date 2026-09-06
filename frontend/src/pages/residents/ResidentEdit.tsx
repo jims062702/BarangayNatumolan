@@ -5,12 +5,12 @@ import { api, errorMessage, fieldErrors } from "../../lib/api";
 import { showServerFieldErrors } from "../../lib/formErrors";
 import { confirmAction } from "../../lib/confirm";
 import Card from "../../components/UI/Card";
-import Breadcrumbs from "../../components/UI/Breadcrumbs";
 import PageHeader from "../../components/UI/PageHeader";
 import FormField, { inputClasses } from "../../components/UI/FormField";
 import PhoneInput from "../../components/UI/PhoneInput";
 import HouseholdPicker from "../../components/UI/HouseholdPicker";
 import type { Household, Resident } from "../../types";
+import { FormSkeleton } from "../../components/UI/Skeleton";
 
 /** Whole-year age from a YYYY-MM-DD birthdate. */
 function ageFromBirthdate(birthdate: string): number | null {
@@ -172,15 +172,13 @@ export default function ResidentEdit() {
 
   return (
     <div>
-      <Breadcrumbs
-        items={[
+      <PageHeader
+        crumbs={[
           { label: "Dashboard", to: "/dashboard" },
           { label: "Residents", to: "/residents" },
           { label: name, to: `/residents/${id}` },
           { label: "Edit Information" },
         ]}
-      />
-      <PageHeader
         title="Edit Resident Information"
         subtitle={
           resident
@@ -203,7 +201,7 @@ export default function ResidentEdit() {
           <p className="mb-4 rounded-xl bg-danger/10 px-4 py-2.5 text-sm font-medium text-danger">{error}</p>
         )}
         {!form ? (
-          <p className="py-10 text-center text-sm text-gray-400">Loading…</p>
+          <FormSkeleton fields={12} />
         ) : (
           <form ref={formRef} onSubmit={save} className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
             <FormField label="First name" required>
@@ -237,7 +235,18 @@ export default function ResidentEdit() {
               </select>
             </FormField>
             <FormField label="Occupation">
-              <input value={form.occupation} onChange={set("occupation")} className={inputClasses} />
+              <div>
+            <input
+              value={form.occupation || "Not set"}
+              readOnly
+              aria-label="Occupation"
+              className={`${inputClasses} cursor-not-allowed bg-secondary text-gray-400`}
+            />
+            <p className="mt-1 text-xs text-gray-400">
+              The resident sets this from their portal. Nobody at the counter knows what work
+              somebody does better than they do.
+            </p>
+          </div>
             </FormField>
             <FormField label="Contact number" hint="Philippine mobile — 10 digits after +63">
               <PhoneInput

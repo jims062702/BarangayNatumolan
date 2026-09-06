@@ -5,13 +5,13 @@ import { toast } from "../lib/toast";
 import { confirmAction } from "../lib/confirm";
 import Modal from "./UI/Modal";
 import { inputClasses } from "./UI/FormField";
+import type { Resident } from "../types";
 
 const PUROKS = ["Purok 1", "Purok 2", "Purok 3", "Purok 4", "Purok 5"];
 
 const SECTORS = [
-  "Senior Citizen", "PWD", "Solo Parent", "Youth", "Children Under Five",
-  "Pregnant Women", "4Ps Household", "Indigent", "Unemployed",
-  "Out-of-School Youth", "Farmer / Fisherfolk",
+  "Senior Citizen", "PWD", "Solo Parent", "Youth", "Child",
+  "Children Under Five", "Adult", "4Ps Household", "Indigent",
 ];
 
 /**
@@ -29,12 +29,20 @@ interface PreviewRow {
   name: string;
   action: "create" | "update";
   matched_number?: string | null;
+  /** A household number this row would bring into being, if it names one. */
+  new_household?: string | null;
   problems: string[];
 }
 
 interface Preview {
   rows: PreviewRow[];
-  summary: { total: number; create: number; update: number; errors: number };
+  summary: {
+    total: number;
+    create: number;
+    update: number;
+    errors: number;
+    new_households: number;
+  };
 }
 
 /**
@@ -85,7 +93,15 @@ export default function ResidentTransferModal({
   const [purok, setPurok] = useState("");
   const [sector, setSector] = useState("");
   const [matchCount, setMatchCount] = useState<number | null>(null);
+  /*
+   * The first few of them, by name.
+   *
+   * A count answers "how many" and not "which", and "which" is the question
+   * somebody has when they typed a surname and eight people share it.
+   */
+  const [matches, setMatches] = useState<Resident[]>([]);
   const [counting, setCounting] = useState(false);
+  const [format, setFormat] = useState<"csv" | "xlsx">("csv");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -101,9 +117,17 @@ export default function ResidentTransferModal({
     setCounting(true);
     const timer = setTimeout(() => {
       api
-        .get("/residents", { params: { ...exportParams(), per_page: 1 } })
-        .then((r) => setMatchCount(r.data.data.total ?? 0))
-        .catch(() => setMatchCount(null))
+        /* Six of them: enough to recognise a wrong filter, few enough that
+           the dialogue does not become a second resident list. */
+        .get("/residents", { params: { ...exportParams(), per_page: 6 } })
+        .then((r) => {
+          setMatchCount(r.data.data.total ?? 0);
+          setMatches(r.data.data.data ?? []);
+        })
+        .catch(() => {
+          setMatchCount(null);
+          setMatches([]);
+        })
         .finally(() => setCounting(false));
     }, 250);
 
@@ -128,16 +152,16 @@ export default function ResidentTransferModal({
     sector: sector || undefined,
   });
 
-  const exportCsv = async () => {
+  const runExport = async () => {
     setBusy(true);
     try {
       const query = new URLSearchParams(
-        Object.entries(exportParams())
+        Object.entries({ ...exportParams(), format })
           .filter(([, v]) => v !== undefined)
           .map(([k, v]) => [k, String(v)])
       ).toString();
 
-      await download(`/residents-export?${query}`, "residents.csv");
+      await download(`/residents-export?${query}`, `residents.${format}`);
       toast(`${matchCount} record(s) exported.`);
     } catch (err) {
       toast(errorMessage(err), "error");
@@ -165,13 +189,21 @@ export default function ResidentTransferModal({
   const runImport = async () => {
     if (!file || !preview) return;
 
-    const { create, update, errors } = preview.summary;
+    const { create, update, errors, new_households: households } = preview.summary;
+
+    /* Both facts, in the order they matter. A household created by mistake
+       is harder to notice afterwards than a resident, because nothing is
+       obviously wrong about it. */
+    const consequences = [
+      households ? `${households} new household(s) will be created.` : "",
+      errors ? `${errors} row(s) with problems will be skipped.` : "",
+    ].filter(Boolean);
 
     if (
       !(await confirmAction({
         title: `Import ${create} new and ${update} updated record(s)?`,
-        text: errors
-          ? `${errors} row(s) with problems will be skipped.`
+        text: consequences.length
+          ? consequences.join(" ")
           : "This writes to the resident registry.",
         confirmText: "Yes, import",
       }))
@@ -218,9 +250,8 @@ export default function ResidentTransferModal({
         {mode === "export" && (
         <section className="space-y-4">
           <p className="text-xs leading-relaxed text-gray-500">
-            A CSV file — every spreadsheet opens it. Use it for a backup, or to hand the
-            barangay&rsquo;s data to somebody who asked for it. Narrow it down first, or take
-            the lot.
+            A backup, or the barangay&rsquo;s data for somebody who asked for it. Narrow it
+            down first, or take the lot — and check the names below before you do.
           </p>
 
           {/*
@@ -287,45 +318,126 @@ export default function ResidentTransferModal({
           </div>
 
           {/*
-            The count before the download.
+            Who is actually in the file.
 
-            A file is opened somewhere else, usually later; finding out then
-            that a filter matched nobody means the trip was wasted. So the
-            number is on screen while the choice is still being made.
+            A count alone answers "how many" and not "which" — and "which" is
+            the question somebody has when they typed a surname and eight
+            people share it. Seeing the names is the only chance anybody gets
+            to notice they are about to hand out the wrong eight.
           */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-secondary/50 px-4 py-3">
-            <p className="text-sm text-dark">
-              {counting ? (
-                <span className="text-gray-500">Counting…</span>
-              ) : (
-                <>
-                  <span className="font-bold">{matchCount ?? 0}</span>{" "}
-                  <span className="text-gray-500">
-                    {matchCount === 1 ? "record matches" : "records match"}
-                  </span>
-                </>
-              )}
-            </p>
-            <div className="flex flex-wrap gap-2">
+          <div className="rounded-xl border border-gray bg-secondary/40 p-4">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-dark">
+                {counting ? (
+                  <span className="text-gray-500">Counting…</span>
+                ) : (
+                  <>
+                    <span className="font-bold">{matchCount ?? 0}</span>{" "}
+                    <span className="text-gray-500">
+                      {matchCount === 1 ? "record matches" : "records match"}
+                    </span>
+                  </>
+                )}
+              </p>
               {(search || purok || sector) && (
                 <button
                   type="button"
                   onClick={() => { setSearch(""); setPurok(""); setSector(""); }}
-                  className="cursor-pointer rounded-full border border-gray bg-white px-4 py-2 text-xs font-semibold text-gray-500 transition-colors hover:border-primary hover:text-primary"
+                  className="cursor-pointer rounded-full border border-gray bg-white px-4 py-1.5 text-xs font-semibold text-gray-500 transition-colors hover:border-primary hover:text-primary"
                 >
                   Clear filters
                 </button>
               )}
-              <button
-                type="button"
-                disabled={busy || counting || !matchCount}
-                onClick={exportCsv}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark disabled:opacity-60"
-              >
-                <FiDownload className="h-4 w-4" aria-hidden="true" />
-                {matchCount ? `Export ${matchCount}` : "Nothing to export"}
-              </button>
             </div>
+
+            {!counting && matches.length > 0 && (
+              <ul className="divide-y divide-gray/60 rounded-lg bg-white">
+                {matches.map((person) => (
+                  <li key={person.id} className="flex flex-wrap items-baseline gap-x-3 px-3 py-2">
+                    <span className="font-medium text-dark">
+                      {person.last_name}, {person.first_name}
+                      {person.middle_name ? ` ${person.middle_name}` : ""}
+                    </span>
+                    <span className="text-xs text-gray-400">{person.resident_number}</span>
+                    {person.zone_purok && (
+                      <span className="text-xs text-gray-400">{person.zone_purok}</span>
+                    )}
+                    {person.birthdate && (
+                      <span className="ml-auto text-xs text-gray-400">
+                        born {person.birthdate.slice(0, 10)}
+                      </span>
+                    )}
+                  </li>
+                ))}
+
+                {/*
+                  Named exactly. "and more" leaves the reader guessing whether
+                  it is two or two thousand, which is the number that decides
+                  whether they check.
+                */}
+                {(matchCount ?? 0) > matches.length && (
+                  <li className="px-3 py-2 text-xs text-gray-500">
+                    …and {(matchCount ?? 0) - matches.length} more, all in the file.
+                  </li>
+                )}
+              </ul>
+            )}
+
+            {!counting && matchCount === 0 && (
+              <p className="rounded-lg bg-white px-3 py-3 text-sm text-gray-400">
+                Nobody matches these filters. Nothing would be in the file.
+              </p>
+            )}
+          </div>
+
+          {/*
+            Two formats, and CSV stays the default.
+
+            CSV is the one every spreadsheet on earth opens, and a file the
+            office cannot open is not a backup. But a clerk who is only ever
+            going to open this in Excel should not answer an import dialogue
+            about delimiters every time, so the other is right there.
+          */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="mb-1.5 text-sm font-medium text-dark">File format</p>
+              <div className="flex flex-wrap gap-2">
+                {([
+                  { value: "csv", label: "CSV", note: "Opens anywhere" },
+                  { value: "xlsx", label: "Excel", note: ".xlsx" },
+                ] as const).map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setFormat(option.value)}
+                    aria-pressed={format === option.value}
+                    className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold transition-colors ${
+                      format === option.value
+                        ? "bg-primary text-white"
+                        : "bg-secondary text-dark hover:bg-primary/10"
+                    }`}
+                  >
+                    {format === option.value && (
+                      <FiCheck className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    )}
+                    {option.label}
+                    <span className="font-normal opacity-70">{option.note}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={busy || counting || !matchCount}
+              onClick={runExport}
+              className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark disabled:opacity-60"
+            >
+              <FiDownload className="h-4 w-4" aria-hidden="true" />
+              {matchCount
+                ? `Export ${matchCount} as ${format === "xlsx" ? "Excel" : "CSV"}`
+                : "Nothing to export"}
+            </button>
           </div>
         </section>
         )}
@@ -335,8 +447,8 @@ export default function ResidentTransferModal({
         <section>
           <p className="mb-1 text-sm font-semibold text-dark">Bring data in</p>
           <p className="mb-3 text-xs leading-relaxed text-gray-500">
-            Nothing is saved until you have seen what the file would do. A row that matches
-            somebody already on the register updates them;{" "}
+            A CSV or an Excel file. Nothing is saved until you have seen what it would do: a
+            row that matches somebody already on the register updates them;{" "}
             <strong className="text-dark">an empty cell changes nothing</strong> — it is read as
             &ldquo;not filled in&rdquo;, never as &ldquo;clear this&rdquo;.
           </p>
@@ -345,7 +457,9 @@ export default function ResidentTransferModal({
             <input
               ref={fileInput}
               type="file"
-              accept=".csv,text/csv"
+              /* Either of the two the export writes — a file this system
+                 handed out should be a file it takes back. */
+              accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               onChange={(e) => {
                 const chosen = e.target.files?.[0] ?? null;
                 setFile(chosen);
@@ -382,12 +496,48 @@ export default function ResidentTransferModal({
                   <span className="font-bold text-dark">{preview.summary.update}</span>{" "}
                   <span className="text-gray-500">updated</span>
                 </span>
+                {preview.summary.new_households > 0 && (
+                  <span>
+                    <span className="font-bold text-dark">{preview.summary.new_households}</span>{" "}
+                    <span className="text-gray-500">
+                      new household{preview.summary.new_households === 1 ? "" : "s"}
+                    </span>
+                  </span>
+                )}
                 {preview.summary.errors > 0 && (
                   <span className="text-danger">
                     <span className="font-bold">{preview.summary.errors}</span> with problems
                   </span>
                 )}
               </div>
+
+              {/*
+                Every household about to be created, by number.
+
+                A household number that is not on the register is not an
+                error — the office is importing so that things get onto the
+                register. But it is one typo away from another number, and a
+                typo would otherwise quietly found a household containing one
+                person for ever. So they are named, while nothing is written.
+              */}
+              {preview.summary.new_households > 0 && (
+                <div className="mb-3 rounded-lg border border-warning/40 bg-warning/5 px-3 py-2.5">
+                  <p className="text-xs font-semibold text-amber-800">
+                    These household numbers are not on the register yet and will be created:
+                  </p>
+                  <p className="mt-1 text-xs text-amber-900">
+                    {[...new Set(
+                      preview.rows
+                        .filter((row) => row.new_household && row.problems.length === 0)
+                        .map((row) => row.new_household as string)
+                    )].join(", ")}
+                  </p>
+                  <p className="mt-1.5 text-[11px] text-amber-700">
+                    Check them against the register first — a mistyped number makes a household
+                    of its own.
+                  </p>
+                </div>
+              )}
 
               {/*
                 The bad rows first and in full. A clerk deciding whether to

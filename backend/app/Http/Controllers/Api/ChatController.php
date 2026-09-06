@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Support\ChatShortcuts;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 /**
  * Live-agent chat.
@@ -125,8 +126,20 @@ class ChatController extends BaseController
             ->latest('id')
             ->first();
 
+        /*
+         * Closed conversations are not open, but they are not gone either —
+         * see `history`. The count travels even when there is nothing open,
+         * so the widget can offer them without a second request.
+         */
+        $past = ChatConversation::where('resident_id', $resident)
+            ->where('status', 'Closed')
+            ->count();
+
         if (!$conversation) {
-            return $this->success(['conversation' => null], 'No conversation open');
+            return $this->success(
+                ['conversation' => null, 'past_conversations' => $past],
+                'No conversation open'
+            );
         }
 
         $conversation->forceFill(['unread_for_visitor' => 0])->save();
@@ -134,8 +147,62 @@ class ChatController extends BaseController
         return $this->success([
             'session_token' => $conversation->session_token,
             'conversation' => $this->visitorView($conversation),
+            'past_conversations' => $past,
             'messages' => $conversation->messages()->get()->map(fn ($m) => $this->messageView($m)),
         ], 'Conversation retrieved');
+    }
+
+    /**
+     * Every conversation this resident has had, newest first.
+     *
+     * Resolving one does not delete anything — `close` writes a system line
+     * and flips the status — but `mine` only ever returned an OPEN one, so
+     * the moment the Secretary marked a conversation resolved it vanished
+     * from the resident's side. The answer they had been given went with it.
+     *
+     * That is the wrong way round. The resident is the one who has to act on
+     * what was said: which office, which day, what to bring. The desk can
+     * look a thread up again whenever it likes; the resident could not.
+     *
+     * Only the outline here. The thread itself is read through `thread`,
+     * which already serves a closed conversation to the resident who owns it.
+     */
+    public function history()
+    {
+        $resident = $this->callerResidentId();
+
+        if (!$resident) {
+            return $this->forbidden('The live desk is for registered residents.');
+        }
+
+        $rows = ChatConversation::where('resident_id', $resident)
+            ->withCount('messages')
+            ->orderByDesc('id')
+            ->limit(50)
+            ->get()
+            ->map(function (ChatConversation $conversation) {
+                /*
+                 * The resident's own first line, as the label. A list of
+                 * dates says nothing about which conversation was which —
+                 * "my clearance" is what they are looking for.
+                 */
+                $opening = $conversation->messages()
+                    ->where('sender', 'visitor')
+                    ->orderBy('id')
+                    ->value('body');
+
+                return [
+                    'session_token' => $conversation->session_token,
+                    'status' => $conversation->status,
+                    'started_at' => $conversation->created_at?->toDateTimeString(),
+                    'closed_at' => $conversation->closed_at?->toDateTimeString(),
+                    'agent_name' => $conversation->agent?->name,
+                    'messages' => $conversation->messages_count,
+                    'opening' => $opening ? Str::limit(trim($opening), 80) : null,
+                ];
+            });
+
+        return $this->success(['conversations' => $rows], 'Conversation history retrieved');
     }
 
     /** The resident behind the request, or null for anybody else. */

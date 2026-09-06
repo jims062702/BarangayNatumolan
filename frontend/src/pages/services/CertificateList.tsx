@@ -1,13 +1,15 @@
 import { useEffect, useState, type FormEvent } from "react";
-import Swal from "sweetalert2";
 import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { FiEye, FiPlus } from "react-icons/fi";
+import RowAction, { RowActions } from "../../components/UI/RowAction";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import Modal from "../../components/UI/Modal";
 import StatusBadge from "../../components/UI/StatusBadge";
+import { personName } from "../../lib/names";
 import PageHeader from "../../components/UI/PageHeader";
 import FormField, { inputClasses } from "../../components/UI/FormField";
 import ResidentPicker from "../../components/ResidentPicker";
@@ -95,6 +97,15 @@ export default function CertificateList() {
   const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
+  // So the footer can say WHICH rows are on screen, not only the page.
+  const [total, setTotal] = useState(0);
+  /*
+   * How many sit under each chip. Of the whole list rather than the page,
+   * and unmoved by which chip is picked — otherwise the chosen one would
+   * read its total and every other would read zero, which is exactly the
+   * question the chips are there to answer.
+   */
+  const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
 
   const [detail, setDetail] = useState<Certificate | null>(null);
@@ -119,7 +130,9 @@ export default function CertificateList() {
       .get("/certificates", { params: { page, status: statusFilter || undefined } })
       .then((r) => {
         setRows(r.data.data.data ?? []);
+        setCounts(r.data.data.counts ?? {});
         setLastPage(r.data.data.last_page ?? 1);
+        setTotal(r.data.data.total ?? 0);
       })
       .finally(() => setLoading(false));
   };
@@ -282,38 +295,6 @@ export default function CertificateList() {
   };
 
   /**
-   * Cancelling is the one way off the workflow, for an application that
-   * should never have been filed. The reason is required because the
-   * resident is shown it.
-   */
-  const cancel = async (certificate: Certificate) => {
-    const result = await Swal.fire({
-      title: "Cancel this request?",
-      input: "text",
-      inputLabel: "Reason (the resident will see this)",
-      inputPlaceholder: "e.g. Withdrawn by the resident, duplicate request",
-      inputValidator: (value) => (value.trim() ? undefined : "Please give a reason."),
-      showCancelButton: true,
-      confirmButtonText: "Yes, cancel it",
-      cancelButtonText: "Keep it",
-      confirmButtonColor: "#DC2626",
-      cancelButtonColor: "#6B7280",
-      reverseButtons: true,
-    });
-    if (!result.isConfirmed) return;
-    try {
-      const response = await api.post(`/certificates/${certificate.id}/cancel`, {
-        reason: result.value,
-      });
-      toast(response.data.message);
-      setDetail(null);
-      load();
-    } catch (err) {
-      toast(errorMessage(err), "error");
-    }
-  };
-
-  /**
    * Print, and that is the whole middle of the workflow.
    *
    * No confirmation dialog: the printout opens in its own window where the
@@ -355,7 +336,6 @@ export default function CertificateList() {
     const outline = `${base} border border-primary/40 text-primary hover:bg-primary hover:text-white`;
     const success = `${base} bg-success text-white hover:opacity-90`;
     const quiet = `${base} border border-gray text-gray-500 hover:border-primary hover:text-primary`;
-    const danger = `${base} border border-danger/40 text-danger hover:bg-danger hover:text-white`;
 
     return (
       <>
@@ -394,11 +374,12 @@ export default function CertificateList() {
             </button>
           </>
         )}
-        {["Pending", "Processing"].includes(c.status) && (
-          <button type="button" onClick={() => cancel(c)} className={danger}>
-            Cancel
-          </button>
-        )}
+        {/*
+          No cancel. The office decided a filed request is not withdrawn —
+          it is worked, or it waits. A certificate already Cancelled keeps
+          that status and stays findable; what has gone is the ability to
+          put a new one there.
+        */}
       </>
     );
   };
@@ -412,9 +393,9 @@ export default function CertificateList() {
           <button
             type="button"
             onClick={openCreate}
-            className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
           >
-            + New certificate
+            <FiPlus className="h-4 w-4" aria-hidden="true" /> New certificate
           </button>
         }
       />
@@ -464,6 +445,9 @@ export default function CertificateList() {
               }`}
             >
               {status || "All"}
+              {status && counts[status] ? (
+                <span className="ml-1.5 opacity-70">{counts[status]}</span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -486,10 +470,61 @@ export default function CertificateList() {
             },
             {
               header: "Resident",
-              render: (c: Certificate) =>
-                c.resident ? `${c.resident.first_name} ${c.resident.last_name}` : "—",
+              /*
+                The name, and how to reach them.
+
+                A certificate sits Ready to Claim until somebody collects it,
+                and the resident only learns it is ready if they open their
+                portal. Plenty never do. The purok and the number are already
+                on the register — showing them here is the difference between
+                a clerk who can send a text and one who waits.
+
+                Read from the register rather than copied onto the
+                certificate, so a resident who moves is reachable at the
+                address they moved to.
+              */
+              render: (c: Certificate) => (
+                <div className="min-w-0">
+                  <p className="font-medium text-dark">
+                    {c.resident ? personName(c.resident) : "—"}
+                  </p>
+                  {(c.resident?.zone_purok || c.resident?.contact_number) && (
+                    <p className="mt-0.5 text-[11px] text-gray-500">
+                      {[c.resident.zone_purok, c.resident.contact_number]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                  )}
+                </div>
+              ),
             },
             { header: "Type", render: (c: Certificate) => c.certificate_type },
+            {
+              /*
+                How it was asked for, on the list rather than a modal away.
+
+                It decides what the clerk does with a finished certificate:
+                somebody who walked in is expecting a call, and somebody who
+                asked online may never open their portal to learn it is
+                ready. Buried in the detail, that had to be checked one row
+                at a time.
+              */
+              header: "Channel",
+              render: (c: Certificate) =>
+                c.service_request?.request_type ? (
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                      c.service_request.request_type === "Online"
+                        ? "bg-primary/10 text-primary"
+                        : "bg-secondary text-gray-600"
+                    }`}
+                  >
+                    {c.service_request.request_type}
+                  </span>
+                ) : (
+                  <span className="text-xs text-gray-400">—</span>
+                ),
+            },
             {
               header: "Fee",
               render: (c: Certificate) =>
@@ -503,27 +538,34 @@ export default function CertificateList() {
             {
               header: "Actions",
               render: (c: Certificate) => (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => openDetail(c)}
-                    className="cursor-pointer rounded-full border border-gray px-3 py-1 text-xs font-semibold text-dark hover:border-primary hover:text-primary"
-                  >
-                    View
-                  </button>
+                <RowActions>
+                  <RowAction label="View certificate" icon={FiEye} onClick={() => openDetail(c)} />
                   {actionsFor(c, "sm")}
-                </div>
+                </RowActions>
               ),
             },
           ]}
           rows={rows}
           rowKey={(c) => c.id}
+          numbered
+          total={total}
           searchable
           searchPlaceholder="Search by name, certificate #, or reference…"
+          /*
+            The purok and the number are searchable too, so a clerk ringing
+            round the ones ready to claim can pull up a whole purok at once
+            rather than opening them one at a time.
+          */
           getSearchText={(c) =>
-            `${c.certificate_number} ${c.reference_number} ${
-              c.resident ? `${c.resident.first_name} ${c.resident.last_name}` : ""
-            } ${c.certificate_type}`
+            [
+              c.certificate_number,
+              c.reference_number,
+              c.resident ? personName(c.resident) : "",
+              c.certificate_type,
+              c.resident?.zone_purok ?? "",
+              c.resident?.contact_number ?? "",
+              c.service_request?.request_type ?? "",
+            ].join(" ")
           }
           filters={[{ label: "Type", getValue: (c) => c.certificate_type }]}
           loading={loading}
@@ -739,7 +781,14 @@ export default function CertificateList() {
 
             <dl className="grid gap-3 sm:grid-cols-2">
               {[
-                ["Resident", detail.resident ? `${detail.resident.first_name} ${detail.resident.last_name}` : "—"],
+                ["Resident", detail.resident ? personName(detail.resident) : "—"],
+                /*
+                  How to tell them it is ready. Read live from the register:
+                  a number copied onto the certificate at filing time is the
+                  number they had then, not the one they have now.
+                */
+                ["Purok", detail.resident?.zone_purok || "Not recorded"],
+                ["Contact", detail.resident?.contact_number || "No number on file"],
                 ["Purpose", detail.purpose ?? "—"],
                 ["Fee", detail.is_exempt ? `Exempt${detail.exemption_reason ? ` — ${detail.exemption_reason}` : ""}` : `₱${Number(detail.fee_amount).toFixed(2)}`],
                 ["Requested", detail.created_at ? new Date(detail.created_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "—"],

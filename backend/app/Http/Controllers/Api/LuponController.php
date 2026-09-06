@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Support\DateWindow;
 use App\Support\SequenceNumber;
 
 use App\Models\LuponCase;
@@ -64,12 +65,26 @@ class LuponController extends BaseController
             $query->where('jurisdiction_status', $request->jurisdiction_status);
         }
 
+        /*
+         * The period, as Manila calendar days.
+         *
+         * date_filed is a DATE: no clock, so no timezone to convert. Pushing
+         * it through UTC would move a case filed on the 1st back onto the
+         * last day of the month before.
+         */
+        $window = DateWindow::fromRequest($request);
+        $window?->applyTo($query, 'date_filed', dateOnly: true);
+
         // Newest case first, and always in case-number sequence: numbers are
         // issued in order, so id order is case-number order. Ordering by
         // date_filed alone left cases filed on the same day unsorted.
         $cases = $query->orderByDesc('id')->paginate(20);
 
-        return $this->success($cases, 'Lupon cases retrieved');
+        $payload = $cases->toArray();
+        $payload['window'] = $window?->toArray();
+        $payload['years'] = DateWindow::yearsFrom(LuponCase::min('date_filed'));
+
+        return $this->success($payload, 'Lupon cases retrieved');
     }
 
     public function store(Request $request)

@@ -222,10 +222,23 @@ export default function DataTable<T>({
       */}
       <div className="space-y-3 sm:hidden">
         {notice === "loading" && (
-          <div className="rounded-xl border border-gray bg-white px-4 py-10 text-center text-gray-400">
-            <span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-primary/20 border-t-primary align-middle" />
-            <span className="ml-3 align-middle">Loading…</span>
-          </div>
+          <>
+            <span role="status" aria-live="polite" className="sr-only">
+              Loading the list
+            </span>
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} aria-hidden="true" className="rounded-xl border border-gray bg-white p-4">
+                <div className="space-y-3">
+                  {dataColumns.slice(0, 3).map((_column, j) => (
+                    <div key={j} className="flex items-baseline justify-between gap-3">
+                      <span className="h-3 w-20 animate-pulse rounded bg-gray" />
+                      <span className="h-3 w-24 animate-pulse rounded bg-gray" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </>
         )}
         {notice !== null && notice !== "loading" && (
           <div className="rounded-xl border border-gray bg-white px-4 py-10 text-center text-sm text-gray-400">
@@ -293,12 +306,39 @@ export default function DataTable<T>({
             {/* Keep showing current rows during background refreshes — the
                 spinner only appears while the table is still empty. */}
             {loading && rows.length === 0 && (
-              <tr>
-                <td colSpan={columns.length + (showNumbers ? 1 : 0)} className="px-4 py-10 text-center text-gray-400">
-                  <span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-primary/20 border-t-primary align-middle" />
-                  <span className="ml-3 align-middle">Loading…</span>
-                </td>
-              </tr>
+              <>
+                <tr>
+                  <td colSpan={columns.length + (showNumbers ? 1 : 0)} className="p-0">
+                    <span role="status" aria-live="polite" className="sr-only">
+                      Loading the table
+                    </span>
+                  </td>
+                </tr>
+                {/*
+                  Five rows, whatever is coming. Enough to read as a table
+                  rather than as an error, and few enough that a list of two
+                  does not shrink when it lands.
+                */}
+                {Array.from({ length: 5 }).map((_, r) => (
+                  <tr key={r} aria-hidden="true">
+                    {showNumbers && (
+                      <td className="px-4 py-3.5">
+                        <span className="block h-3 w-4 animate-pulse rounded bg-gray" />
+                      </td>
+                    )}
+                    {columns.map((_column, c) => (
+                      <td key={c} className="px-4 py-3.5">
+                        <span
+                          className="block h-3.5 animate-pulse rounded bg-gray"
+                          /* Ragged widths: a grid of identical bars reads as
+                             a loaded table of empty cells. */
+                          style={{ width: `${[70, 45, 60, 35, 55, 50][c % 6]}%` }}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </>
             )}
             {!loading && rows.length === 0 && (
               <tr>

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Link, Navigate } from "react-router-dom";
+import { AppShellSkeleton } from "./UI/Skeleton";
 import { useAuth, homePathFor } from "../contexts/AuthContext";
 
 interface ProtectedRouteProps {
@@ -26,16 +27,16 @@ export default function ProtectedRoute({
 }: ProtectedRouteProps) {
   const { isAuthenticated, loading, user } = useAuth();
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-secondary">
-        <div className="flex flex-col items-center gap-3">
-          <span className="h-10 w-10 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
-          <p className="text-sm text-gray-500">Loading…</p>
-        </div>
-      </div>
-    );
-  }
+  /*
+   * A refresh has to ask the server who is signed in before it can decide
+   * what to draw. That used to be a spinner on an empty page — a blank
+   * screen that says "wait" and nothing about what is coming, and which on a
+   * slow connection is indistinguishable from a broken one.
+   *
+   * The shell instead: the sidebar and the top bar are already in place, so
+   * the page fills in rather than jumping from nothing to everything.
+   */
+  if (loading) return <AppShellSkeleton />;
 
   if (!isAuthenticated || !user) {
     return <Navigate to="/login" replace />;

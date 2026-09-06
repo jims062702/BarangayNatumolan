@@ -36,6 +36,21 @@ interface Props<T> {
   options: Choice<T>[];
   /** Fill the row evenly — for two answers of similar weight. */
   stretch?: boolean;
+  /**
+   * Pressing the chosen answer again takes it back.
+   *
+   * For a question that MAY go unanswered — where a stray click would
+   * otherwise leave a fact on the record that nobody meant to state, and no
+   * way to take it off short of reloading the form.
+   *
+   * Off by default, because most of these choose which fields come next: a
+   * relation, a union type, whether somebody lives outside. Clearing one of
+   * those mid-form leaves it with no path forward, which is worse than a
+   * misclick.
+   */
+  clearable?: boolean;
+  /** Called with null when a clearable answer is taken back. */
+  onClear?: () => void;
 }
 
 export default function ChoiceGroup<T extends string | number | boolean>({
@@ -45,6 +60,8 @@ export default function ChoiceGroup<T extends string | number | boolean>({
   onChange,
   options,
   stretch = true,
+  clearable = false,
+  onClear,
 }: Props<T>) {
   const chosen = options.find((option) => option.value === value);
 
@@ -61,8 +78,9 @@ export default function ChoiceGroup<T extends string | number | boolean>({
             <button
               key={String(option.value)}
               type="button"
-              onClick={() => onChange(option.value)}
+              onClick={() => (on && clearable ? onClear?.() : onChange(option.value))}
               aria-pressed={on}
+              title={on && clearable ? "Press again to take this answer back" : undefined}
               className={`inline-flex cursor-pointer items-center justify-center gap-2 rounded-full px-4 py-2 text-xs font-semibold transition-colors ${
                 stretch ? "flex-1" : ""
               } ${
@@ -80,6 +98,16 @@ export default function ChoiceGroup<T extends string | number | boolean>({
           );
         })}
       </div>
+
+      {/*
+        Said out loud, because nothing about a pressed button suggests that
+        pressing it again undoes it.
+      */}
+      {clearable && chosen && (
+        <p className="mt-1.5 text-[11px] text-gray-400">
+          Press <strong className="font-semibold">{chosen.label}</strong> again to take it back.
+        </p>
+      )}
 
       {chosen?.hint && (
         <p className="mt-2 rounded-xl bg-secondary/70 px-4 py-2.5 text-xs leading-relaxed text-gray-600">

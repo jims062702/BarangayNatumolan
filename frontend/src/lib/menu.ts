@@ -24,7 +24,6 @@ import {
   FiSmile,
   FiTrendingUp,
   FiUser,
-  FiUserCheck,
   FiUserPlus,
   FiUserX,
   FiUsers,
@@ -73,8 +72,12 @@ export function menuFor(user: User): MenuSection[] {
   ];
 
   /*
-   * Front-desk core: intake, the window queue, counter verification,
-   * certificates and appointments.
+   * The front desk, which is now one desk and not two.
+   *
+   * Request intake and certificates are the CLERK's work and appear only on
+   * the Clerk's menu — the Secretary was seeing the same worklist, which is
+   * how the same request got started twice. The window queue and the blotter
+   * are gone entirely.
    *
    * The resident REGISTRY is deliberately not here. Only the Population
    * Office (BPO) registers a person, so only they browse it; every other
@@ -82,40 +85,44 @@ export function menuFor(user: User): MenuSection[] {
    * fields and never the browsable registry.
    */
   const core: MenuItem[] = [
-    { label: "Service Requests", to: "/services", icon: FiClipboard },
-    { label: "Service Queue", to: "/queue", icon: FiUserCheck },
-    // The desk's record of what was reported. Not the Lupon docket and
-    // not the VAWC desk — most entries never become either.
-    { label: "Blotter", to: "/blotter", icon: FiBookOpen },
     { label: "Records Verification", to: "/verify-records", icon: FiCheckSquare },
-    { label: "Certificates", to: "/certificates", icon: FiAward },
     { label: "Appointments", to: "/appointments", icon: FiCalendar },
   ];
 
   /*
-   * Referrals + aggregated reports — Main Office and the Punong Barangay.
+   * What a barangay secretary actually keeps.
    *
-   * Every other desk already coordinates and reports inside its own module:
-   * the VAWC Desk keeps a separate referral trail, the Health Station records
-   * referrals on the visit/maternal/child forms, the Lupon routes through the
-   * CFA, and the Population Office has its own sectoral analytics. Reports &
-   * Analytics measures service requests, referrals and administrative
-   * records — none of which those offices own.
+   * The session record and its minutes, and the mediation hearings — the
+   * secretary is the officer who takes the minutes at both, which is why the
+   * time and the attendance are set from here rather than from the docket.
    */
-  const coordination: MenuItem[] = [
-    { label: "Referrals", to: "/referrals", icon: FiShare2 },
-    { label: "Reports & Analytics", to: "/reports", icon: FiBarChart2 },
+  const secretariat: MenuItem[] = [
+    { label: "Barangay Sessions", to: "/sessions", icon: FiBookOpen },
+    { label: "Hearing & Mediation", to: "/lupon/hearings", icon: FiCalendar },
   ];
 
-  // The Clerk runs the front desk: requests, queue + certificates.
+  /*
+   * The Clerk works certificates, and nothing else.
+   *
+   * The queue and the blotter belonged to a wider front desk. This one issues
+   * documents: the list of them, the report on how many were asked for, and
+   * the verification step that comes before one is filed.
+   *
+   * No Service Requests entry. A request for a certificate raises the
+   * certificate the moment it is made — online or at the counter — so the
+   * same piece of work appeared on two screens, and a clerk could start it
+   * twice.
+   *
+   * The route is still there and still reachable. A service that produces no
+   * document — a complaint, say — lives only in that list, and the field
+   * takes any wording, so the list is kept rather than deleted.
+   */
   if (user.role === "Clerk") {
     sections.push({
       heading: "Main Office",
       items: [
-        { label: "Service Requests", to: "/services", icon: FiClipboard },
         { label: "Certificates", to: "/certificates", icon: FiAward },
-        { label: "Service Queue", to: "/queue", icon: FiUserCheck },
-        { label: "Blotter", to: "/blotter", icon: FiBookOpen },
+        { label: "Certificate Report", to: "/certificates/report", icon: FiBarChart2 },
         // Verification is the clerk's own step before a certificate is filed.
         { label: "Records Verification", to: "/verify-records", icon: FiCheckSquare },
       ],
@@ -139,6 +146,11 @@ export function menuFor(user: User): MenuSection[] {
         });
         // The PB personally conducts mediation, so the hearing calendar
         // belongs on their menu alongside the docket.
+        // The session record is the council's, so the PB reads it too.
+        sections.push({
+          heading: "Secretariat",
+          items: [{ label: "Barangay Sessions", to: "/sessions", icon: FiBookOpen }],
+        });
         sections.push({
           heading: "Lupon Tagapamayapa",
           items: [
@@ -149,6 +161,7 @@ export function menuFor(user: User): MenuSection[] {
           ],
         });
       } else {
+        /* The Secretary. */
         sections.push({
           heading: "Main Office",
           items: [
@@ -157,12 +170,8 @@ export function menuFor(user: User): MenuSection[] {
             { label: "Administrative Records", to: "/records", icon: FiArchive },
           ],
         });
+        sections.push({ heading: "Secretariat", items: secretariat });
       }
-      sections.push({ heading: "Coordination", items: coordination });
-      sections.push({
-        heading: "Content",
-        items: [{ label: "Service Guides", to: "/manage/service-guides", icon: FiHelpCircle }],
-      });
       break;
 
     // Deliberately no general Referrals/Reports entry: the VAWC Desk keeps its
@@ -250,12 +259,14 @@ export function menuFor(user: User): MenuSection[] {
         items: [
           { label: "Residents", to: "/residents", icon: FiUsers },
           { label: "Non-residents", to: "/residents/non-residents", icon: FiUserX },
+          { label: "Service Requests", to: "/services", icon: FiClipboard },
+          { label: "Certificates", to: "/certificates", icon: FiAward },
           ...core,
+          ...secretariat,
           { label: "Live Chat", to: "/chat", icon: FiMessageCircle },
           { label: "Administrative Records", to: "/records", icon: FiArchive },
         ],
       });
-      sections.push({ heading: "Coordination", items: coordination });
       sections.push({
         heading: "SK / Landing Content",
         items: [
@@ -269,7 +280,6 @@ export function menuFor(user: User): MenuSection[] {
         items: [
           { label: "User Accounts", to: "/admin/users", icon: FiSettings },
           { label: "Portal Accounts", to: "/population/accounts", icon: FiUserPlus },
-          { label: "Service Guides", to: "/manage/service-guides", icon: FiHelpCircle },
         ],
       });
       break;

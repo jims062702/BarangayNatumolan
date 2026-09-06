@@ -11,6 +11,7 @@ import Card from "../../components/UI/Card";
 import PageHeader from "../../components/UI/PageHeader";
 import StatusBadge from "../../components/UI/StatusBadge";
 import type { ChatConversation, ChatMessage } from "../../types";
+import { RowsSkeleton } from "../../components/UI/Skeleton";
 
 /**
  * The live chat desk — the Barangay Secretary's page.
@@ -235,7 +236,7 @@ export default function LiveChat() {
           )}
 
           {loading ? (
-            <p className="py-8 text-center text-sm text-gray-400">Loading…</p>
+            <RowsSkeleton rows={5} what="the conversations" />
           ) : conversations.length === 0 ? (
             <p className="py-8 text-center text-sm text-gray-400">
               Nobody is waiting. New conversations appear here on their own.

@@ -2,6 +2,8 @@
  * Philippine mobile input: a fixed "+63" prefix plus exactly 10 digits.
  * Emits the combined value as "+63XXXXXXXXXX" (or "" when empty).
  */
+import { localMobile, e164Mobile } from "../../lib/phone";
+
 interface PhoneInputProps {
   value: string;
   onChange: (value: string) => void;
@@ -9,14 +11,16 @@ interface PhoneInputProps {
 }
 
 export default function PhoneInput({ value, onChange, disabled }: PhoneInputProps) {
-  // Derive the 10-digit local part from whatever format is stored.
-  const digits = (value || "").replace(/\D/g, "");
-  const local = (digits.startsWith("63") ? digits.slice(2) : digits).slice(0, 10);
+  /*
+   * The 10-digit local part, from whichever of the three shapes is stored.
+   *
+   * This used to strip a leading "63" and nothing else, so a number saved as
+   * 09171234567 — eleven digits — had its last one cut off and came back as
+   * 0917123456. It looked like a complete number and was not one.
+   */
+  const local = localMobile(value);
 
-  const handle = (raw: string) => {
-    const ten = raw.replace(/\D/g, "").slice(0, 10);
-    onChange(ten ? "+63" + ten : "");
-  };
+  const handle = (raw: string) => onChange(e164Mobile(raw));
 
   return (
     <div

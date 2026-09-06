@@ -98,6 +98,48 @@ class AppointmentController extends BaseController
         return $this->success($appointment, 'Appointment updated');
     }
 
+    /**
+     * Attendance, the real times, and the minutes.
+     *
+     * The secretary's act, and gated to them at the route. `attendance` is
+     * deliberately not `status`: an appointment can be Completed with nobody
+     * present — the office did its part and the resident did not come — and
+     * collapsing the two would lose exactly the fact worth recording.
+     */
+    public function minutes(Request $request, Appointment $appointment)
+    {
+        if ($appointment->status === 'Cancelled') {
+            return $this->error('A cancelled appointment has no minutes.', 422);
+        }
+
+        $validated = $request->validate([
+            'attendance' => 'required|in:Awaiting,Present,Absent,Late',
+            /* Times on the day it was booked for, so no date to disagree. */
+            'started_at' => 'nullable|date_format:H:i',
+            'ended_at' => 'nullable|date_format:H:i|after:started_at',
+            'minutes' => 'nullable|string|max:20000',
+        ], [
+            'ended_at.after' => 'An appointment cannot end before it started.',
+        ]);
+
+        /*
+         * Nobody came, so there is no time it ran and nothing to minute.
+         * Left to the form this becomes a record of a meeting that says it
+         * started at nine and that the resident was absent.
+         */
+        if ($validated['attendance'] === 'Absent') {
+            $validated['started_at'] = null;
+            $validated['ended_at'] = null;
+        }
+
+        $validated['minuted_by'] = auth()->id();
+        $validated['minuted_at'] = now();
+
+        $appointment->update($validated);
+
+        return $this->success($appointment->fresh(), 'Minutes recorded');
+    }
+
     public function destroy(Appointment $appointment)
     {
         if ($appointment->status === 'Completed') {

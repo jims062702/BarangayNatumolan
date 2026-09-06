@@ -1,13 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { FiArrowLeft, FiX } from "react-icons/fi";
+import {  FiArrowLeft, FiX, FiPlus , FiEdit2 } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { personName } from "../../lib/names";
 import { confirmAction } from "../../lib/confirm";
 import { useAuth } from "../../contexts/AuthContext";
 import Card from "../../components/UI/Card";
-import Breadcrumbs from "../../components/UI/Breadcrumbs";
 import Modal from "../../components/UI/Modal";
 import StatusBadge from "../../components/UI/StatusBadge";
 import PageHeader from "../../components/UI/PageHeader";
@@ -279,8 +278,8 @@ export default function ResidentDetail() {
 
   return (
     <div>
-      <Breadcrumbs
-        items={[
+      <PageHeader
+        crumbs={[
           { label: "Dashboard", to: "/dashboard" },
           // Back to the list they were actually browsing. Sending somebody
           // from a non-resident to the resident registry is a dead end: the
@@ -291,8 +290,6 @@ export default function ResidentDetail() {
           },
           { label: `${resident.first_name} ${resident.last_name}` },
         ]}
-      />
-      <PageHeader
         title={`${resident.first_name} ${resident.last_name}`}
         subtitle={
           isOutside
@@ -313,9 +310,9 @@ export default function ResidentDetail() {
             {canEdit && (
               <Link
                 to={`${home}/${id}/edit`}
-                className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+                className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
               >
-                Edit information
+                <FiEdit2 className="h-4 w-4" aria-hidden="true" /> Edit information
               </Link>
             )}
           </div>
@@ -389,7 +386,7 @@ export default function ResidentDetail() {
                 onClick={() => setSectorOpen(true)}
                 className="cursor-pointer text-sm font-medium text-primary hover:underline"
               >
-                + Add sector
+                <FiPlus className="h-4 w-4" aria-hidden="true" /> Add sector
               </button>
             ) : undefined
           }
@@ -507,7 +504,7 @@ export default function ResidentDetail() {
                   <button
                     type="button"
                     onClick={openChangePassword}
-                    className="cursor-pointer rounded-full border border-primary/40 px-5 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
+                    className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-primary/40 px-5 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
                   >
                     Change password
                   </button>
@@ -515,7 +512,7 @@ export default function ResidentDetail() {
                     <button
                       type="button"
                       onClick={resendActivation}
-                      className="cursor-pointer rounded-full border border-gray px-5 py-2 text-sm font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
+                      className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-gray px-5 py-2 text-sm font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
                     >
                       Resend activation code
                     </button>
@@ -534,7 +531,7 @@ export default function ResidentDetail() {
                     setAccountEmail(resident.email ?? "");
                     setAccountOpen(true);
                   }}
-                  className="cursor-pointer rounded-full bg-primary px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-primary px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
                 >
                   Issue portal account
                 </button>
