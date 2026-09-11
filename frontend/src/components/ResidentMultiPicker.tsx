@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { FiX } from "react-icons/fi";
 import { api } from "../lib/api";
-import { inputClasses } from "./UI/FormField";
 import type { Resident } from "../types";
+import SearchInput from "../components/UI/SearchInput";
 
 interface Props {
   value: Resident[];
@@ -106,13 +106,11 @@ export default function ResidentMultiPicker({
       )}
 
       <div className="relative">
-        <input
+        <SearchInput
           value={query}
-          disabled={disabled}
-          onChange={(e) => setQuery(e.target.value)}
-          className={inputClasses}
+          onChange={setQuery}
           placeholder={placeholder}
-          aria-label="Search residents to add"
+          label="Search residents to add"
         />
         {loading && (
           <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs text-gray-400">

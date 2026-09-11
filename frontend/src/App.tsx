@@ -1,9 +1,14 @@
 import { lazy, Suspense } from "react";
-import { AppShellSkeleton } from "./components/UI/Skeleton";
+import {
+  AppShellSkeleton,
+  LoginSkeleton,
+  PublicPageSkeleton,
+} from "./components/UI/Skeleton";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import FormValidationStyler from "./components/FormValidationStyler";
+import IdleSignOut from "./components/IdleSignOut";
 import ErrorBoundary from "./components/ErrorBoundary";
 import NotFound from "./components/NotFound";
 import MainLayout from "./layouts/MainLayout";
@@ -80,6 +85,7 @@ const SkOfficials = lazy(() => import("./pages/sk/SkOfficials"));
 const AdministrativeRecords = lazy(() => import("./pages/records/AdministrativeRecords"));
 const AnnouncementsManage = lazy(() => import("./pages/manage/AnnouncementsManage"));
 const UserManagement = lazy(() => import("./pages/admin/UserManagement"));
+const NonResidents = lazy(() => import("./pages/admin/NonResidents"));
 
 /**
  * What a page chunk downloads behind.
@@ -88,7 +94,22 @@ const UserManagement = lazy(() => import("./pages/admin/UserManagement"));
  * page loading rather than two different loading screens in a row.
  */
 function PageLoader() {
-  return <AppShellSkeleton />;
+  return <PublicPageSkeleton />;
+}
+
+/**
+ * The dashboard shell, with the skeleton that matches it.
+ *
+ * Its own boundary, so the app shell is shown for the pages that HAVE an app
+ * shell and for nothing else. One Suspense over the whole router put a
+ * sidebar and a row of stat tiles in front of the sign-in page.
+ */
+function Shell() {
+  return (
+    <Suspense fallback={<AppShellSkeleton />}>
+      <DashboardLayout />
+    </Suspense>
+  );
 }
 
 export default function App() {
@@ -96,6 +117,9 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <FormValidationStyler />
+        {/* Inside the router, so it can navigate; outside every route, so
+            the countdown survives moving between pages. */}
+        <IdleSignOut />
         <ErrorBoundary>
         <Suspense fallback={<PageLoader />}>
         <Routes>
@@ -104,7 +128,14 @@ export default function App() {
             <Route index element={<LandingPage />} />
             <Route path="news/:id" element={<NewsDetail />} />
           </Route>
-          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/login"
+            element={
+              <Suspense fallback={<LoginSkeleton />}>
+                <LoginPage />
+              </Suspense>
+            }
+          />
           <Route path="/verify" element={<VerifyCertificate />} />
 
           {/* Resident portal */}
@@ -112,7 +143,7 @@ export default function App() {
             path="/portal"
             element={
               <ProtectedRoute residentOnly>
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -140,7 +171,7 @@ export default function App() {
           <Route
             element={
               <ProtectedRoute staffOnly>
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -155,10 +186,9 @@ export default function App() {
             element={
               <ProtectedRoute
                 staffOnly
-                allowedOffices={["Population", "Admin"]}
-                allowedRoles={["Admin"]}
+                allowedOffices={["Population"]}
               >
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -189,10 +219,9 @@ export default function App() {
             element={
               <ProtectedRoute
                 staffOnly
-                allowedOffices={["Main Office", "Population", "Admin"]}
-                allowedRoles={["Admin"]}
+                allowedOffices={["Main Office", "Population"]}
               >
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -205,10 +234,10 @@ export default function App() {
             element={
               <ProtectedRoute
                 staffOnly
-                allowedOffices={["Main Office", "Admin"]}
-                allowedRoles={["Punong Barangay", "Admin"]}
+                allowedOffices={["Main Office"]}
+                allowedRoles={["Punong Barangay"]}
               >
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -221,11 +250,11 @@ export default function App() {
             element={
               <ProtectedRoute
                 staffOnly
-                allowedOffices={["Main Office", "Admin"]}
-                allowedRoles={["Punong Barangay", "Admin"]}
+                allowedOffices={["Main Office"]}
+                allowedRoles={["Punong Barangay"]}
                 deniedRoles={["Clerk"]}
               >
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -240,10 +269,10 @@ export default function App() {
             element={
               <ProtectedRoute
                 staffOnly
-                allowedOffices={["Main Office", "Admin"]}
-                allowedRoles={["Punong Barangay", "Admin"]}
+                allowedOffices={["Main Office"]}
+                allowedRoles={["Punong Barangay"]}
               >
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -257,11 +286,11 @@ export default function App() {
             element={
               <ProtectedRoute
                 staffOnly
-                allowedOffices={["Main Office", "Admin"]}
-                allowedRoles={["Punong Barangay", "Admin"]}
+                allowedOffices={["Main Office"]}
+                allowedRoles={["Punong Barangay"]}
                 deniedRoles={["Clerk"]}
               >
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -278,11 +307,11 @@ export default function App() {
             element={
               <ProtectedRoute
                 staffOnly
-                allowedOffices={["Main Office", "Admin"]}
-                allowedRoles={["Punong Barangay", "Admin"]}
+                allowedOffices={["Main Office"]}
+                allowedRoles={["Punong Barangay"]}
                 deniedRoles={["Clerk"]}
               >
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -292,7 +321,7 @@ export default function App() {
           <Route
             element={
               <ProtectedRoute staffOnly allowedOffices={["VAWC"]}>
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -312,7 +341,7 @@ export default function App() {
                 allowedOffices={["Lupon"]}
                 allowedRoles={["Punong Barangay"]}
               >
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -333,11 +362,11 @@ export default function App() {
             element={
               <ProtectedRoute
                 staffOnly
-                allowedOffices={["Lupon", "Main Office", "Admin"]}
-                allowedRoles={["Punong Barangay", "Admin"]}
+                allowedOffices={["Lupon", "Main Office"]}
+                allowedRoles={["Punong Barangay"]}
                 deniedRoles={["Clerk"]}
               >
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -350,9 +379,8 @@ export default function App() {
               <ProtectedRoute
                 staffOnly
                 allowedOffices={["Population"]}
-                allowedRoles={["Admin"]}
               >
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -369,7 +397,7 @@ export default function App() {
           <Route
             element={
               <ProtectedRoute staffOnly allowedOffices={["Health Station"]}>
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -386,7 +414,7 @@ export default function App() {
                 allowedOffices={["SK"]}
                 allowedRoles={["Punong Barangay", "Admin"]}
               >
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -402,10 +430,10 @@ export default function App() {
               <ProtectedRoute
                 staffOnly
                 allowedOffices={["Main Office"]}
-                allowedRoles={["Punong Barangay", "Admin"]}
+                allowedRoles={["Punong Barangay"]}
                 deniedRoles={["Clerk"]}
               >
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
@@ -416,11 +444,16 @@ export default function App() {
           <Route
             element={
               <ProtectedRoute staffOnly allowedRoles={["Admin"]}>
-                <DashboardLayout />
+                <Shell />
               </ProtectedRoute>
             }
           >
             <Route path="/admin/users" element={<UserManagement />} />
+            {/* The same register, asked a different question. Its own address
+                so it can be linked to, bookmarked and put in the sidebar. */}
+            <Route path="/admin/residents" element={<UserManagement kind="resident" />} />
+            {/* Register entries, not accounts — see the page for why. */}
+            <Route path="/admin/non-residents" element={<NonResidents />} />
           </Route>
 
           {/* Anything else — without this, an unknown address renders an

@@ -42,6 +42,8 @@ class CertificateClearance extends Model
         'service_request_id',
         'certificate_type',
         'purpose',
+        'template_fields',
+        'photo_path',
         'requirements_checklist',
         'fee_amount',
         'is_exempt',
@@ -62,7 +64,23 @@ class CertificateClearance extends Model
         'reprint_count',
     ];
 
+    protected $appends = ['photo_url'];
+
+    /**
+     * The counter photograph, for the clearance that carries one.
+     *
+     * Same shape as Official::photo_url, deliberately — one way of turning a
+     * stored path into something a page can show.
+     */
+    public function getPhotoUrlAttribute(): ?string
+    {
+        return $this->photo_path
+            ? asset(\Illuminate\Support\Facades\Storage::url($this->photo_path))
+            : null;
+    }
+
     protected $casts = [
+        'template_fields' => 'array',
         'fee_amount' => 'decimal:2',
         'is_exempt' => 'boolean',
         'processed_at' => 'datetime',

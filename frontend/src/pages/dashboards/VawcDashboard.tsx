@@ -3,6 +3,9 @@ import { Link } from "react-router-dom";
 import { FiAlertTriangle, FiClock, FiSend, FiShield } from "react-icons/fi";
 import { api } from "../../lib/api";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
+import { useSettledState } from "../../hooks/useSettledState";
+import { DashboardBodySkeleton } from "../../components/UI/Skeleton";
 import Card from "../../components/UI/Card";
 import StatTile from "../../components/UI/StatTile";
 import PageHeader from "../../components/UI/PageHeader";
@@ -21,17 +24,33 @@ interface VawcStats {
 }
 
 export default function VawcDashboard() {
-  const [stats, setStats] = useState<VawcStats | null>(null);
+  /*
+   * Compared by VALUE, not by reference.
+   *
+   * The poll re-fetches the same figures every twenty seconds and hands
+   * back a brand-new object each time, so the charts redrew themselves
+   * and the numbers counted up again on a page nobody had touched.
+   */
+  const [stats, setStats] = useSettledState<VawcStats | null>(null);
 
   // Live updates: bump `tick` to re-run the fetch below.
   const [tick, setTick] = useState(0);
   useAutoRefresh(() => setTick((t) => t + 1), REFRESH.dashboard);
 
+  /* And within a second when somebody else touches one. */
+  usePulse("vawc_cases", () => setTick((t) => t + 1));
+
+  /* Flipped when the first fetch SETTLES — success or failure alike. Keyed
+     off "is the data still null", a request that fails would leave the
+     skeleton pulsing for ever with nothing to read. */
+  const [ready, setReady] = useState(false);
+
   useEffect(() => {
     api
       .get("/vawc/reports/statistics")
       .then((response) => setStats(response.data.data))
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setReady(true));
   }, [tick]);
 
   return (
@@ -56,6 +75,10 @@ export default function VawcDashboard() {
         routed to Lupon mediation.
       </div>
 
+      {!ready ? (
+        <DashboardBodySkeleton tiles={4} tileColumns={4} cards={2} cardColumns={2} />
+      ) : (
+        <>
       <RevealGroup className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Active Cases" value={stats?.total_cases_active ?? 0} icon={FiShield} tone="danger" />
         <StatTile label="Cases This Year" value={stats?.total_cases_year ?? 0} icon={FiClock} />
@@ -111,6 +134,8 @@ export default function VawcDashboard() {
           </div>
         </Card>
       </div>
+        </>
+      )}
     </div>
   );
 }

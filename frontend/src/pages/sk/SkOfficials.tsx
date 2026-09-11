@@ -4,6 +4,9 @@ import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
+import { useUpload } from "../../hooks/useUpload";
+import FileField from "../../components/UI/FileField";
 import Card from "../../components/UI/Card";
 import Modal from "../../components/UI/Modal";
 import PageHeader from "../../components/UI/PageHeader";
@@ -48,8 +51,15 @@ export default function SkOfficials() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY);
 
-  const load = () => {
-    setLoading(true);
+  /*
+   * `silent` is for the background timer.
+   *
+   * A refresh nobody asked for must not blank the page somebody is
+   * reading; a first load or a filter change should still say it is
+   * working. Same fetch, and only the announcement differs.
+   */
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     api.get("/sk/officials").then((r) => setOfficials(r.data.data ?? [])).finally(() => setLoading(false));
   };
 
@@ -58,7 +68,18 @@ export default function SkOfficials() {
   }, []);
 
   // Live updates without a manual refresh.
-  useAutoRefresh(load, REFRESH.staff);
+  useAutoRefresh(() => load(true), REFRESH.staff);
+
+  /*
+   * Somebody else's change, about a second after they make it.
+   *
+   * The timer above stays as a backstop: if the pulse cannot be
+   * reached the page is a few seconds stale rather than frozen.
+   */
+  usePulse("officials", () => load(true));
+
+  /* Progress for the photo, so a slow upload is not mistaken for a dead one. */
+  const upload = useUpload();
 
   // Positions still available for the chosen group (hide any at their limit).
   const availablePositions = useMemo(() => {
@@ -111,15 +132,26 @@ export default function SkOfficials() {
 
       if (form.id) {
         body.append("_method", "PUT");
-        await api.post(`/sk/officials/${form.id}`, body, { headers: { "Content-Type": "multipart/form-data" } });
+        await api.post(`/sk/officials/${form.id}`, body, {
+          headers: { "Content-Type": "multipart/form-data" },
+          ...upload.tracker,
+        });
+        upload.finish();
         toast("Official updated.");
       } else {
-        await api.post("/sk/officials", body, { headers: { "Content-Type": "multipart/form-data" } });
+        await api.post("/sk/officials", body, {
+          headers: { "Content-Type": "multipart/form-data" },
+          ...upload.tracker,
+        });
+        upload.finish();
         toast("Official added — now shown on the public site.");
       }
       setOpen(false);
       load();
     } catch (err) {
+      /* Clear the bar. Left up, a failed upload sits at whatever percentage
+         it died on and reads as still working. */
+      upload.fail();
       toast(errorMessage(err), "error");
     } finally {
       setSaving(false);
@@ -244,11 +276,11 @@ export default function SkOfficials() {
             <input value={form.term} onChange={(e) => setForm((prev) => ({ ...prev, term: e.target.value }))} className={inputClasses} />
           </FormField>
           <FormField label={form.id ? "Replace photo (optional)" : "Photo (optional)"} hint="JPG/PNG up to 5MB">
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(e) => setForm((prev) => ({ ...prev, photo: e.target.files?.[0] ?? null }))}
-              className="block w-full text-sm text-gray-600 file:mr-3 file:cursor-pointer file:rounded-full file:border-0 file:bg-primary/10 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primary"
+            <FileField
+              file={form.photo}
+              onPick={(photo) => setForm((prev) => ({ ...prev, photo }))}
+              progress={upload.progress}
+              done={upload.done}
             />
           </FormField>
           <button

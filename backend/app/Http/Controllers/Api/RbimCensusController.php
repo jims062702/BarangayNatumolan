@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Support\LandingCache;
+use App\Support\PortalAccount;
 use App\Models\Household;
 use App\Models\RbimCensus;
 use App\Models\RbimCensusMember;
@@ -543,8 +544,14 @@ class RbimCensusController extends BaseController
         $registered = [];
         $already = 0;
         $family = [];
+        /*
+         * Held for after the commit. Issuing the accounts inside the
+         * transaction would send welcome emails for residents a rollback
+         * then un-creates, and an email cannot be recalled.
+         */
+        $newResidents = [];
 
-        DB::transaction(function () use ($rbimCensus, $named, $toRegister, &$first, &$registered, &$already, &$family) {
+        DB::transaction(function () use ($rbimCensus, $named, $toRegister, &$first, &$registered, &$already, &$family, &$newResidents) {
             /*
              * The household first, so every person created below can be put
              * in it. The census number IS the household number — one number,
@@ -574,6 +581,7 @@ class RbimCensusController extends BaseController
                 $resident = $this->registerLine($member, $rbimCensus, $household);
                 $member->update(['resident_id' => $resident->id]);
                 $registered[] = $resident->full_name;
+                $newResidents[] = $resident;
             }
 
             /*
@@ -605,6 +613,41 @@ class RbimCensusController extends BaseController
             ]);
         });
 
+        /*
+         * The portal accounts, issued here rather than asked for.
+         *
+         * Registering somebody and then going to their profile to press
+         * "Issue a portal account" was the same intent typed twice, and the
+         * second press is the one that gets forgotten — which is how a
+         * barangay ends up with a register full of residents and a portal
+         * nobody can sign in to. Registration IS the moment the account is
+         * warranted, so this is where it happens.
+         *
+         * provision() never throws and refuses on its own terms: no email on
+         * the line, a non-resident, an address already in use. Each refusal
+         * is a sentence the office can act on, so they are reported rather
+         * than swallowed — and none of them undoes the registration, which
+         * is the record that actually matters.
+         */
+        $accounts = [];
+        $withoutAccount = [];
+
+        foreach ($newResidents as $resident) {
+            $account = PortalAccount::provision($resident, auth()->id());
+
+            if ($account['created']) {
+                $accounts[] = $resident->full_name;
+            } elseif ($resident->email) {
+                /*
+                 * Only worth a sentence if they GAVE an email. A census line
+                 * with no email address is the ordinary case — most of this
+                 * barangay has no mailbox — and naming every one of them
+                 * would bury the two that genuinely went wrong.
+                 */
+                $withoutAccount[] = $resident->full_name . ' — ' . lcfirst($account['reason']);
+            }
+        }
+
         LandingCache::clearStats();
 
         $count = count($registered);
@@ -618,6 +661,19 @@ class RbimCensusController extends BaseController
                     . ($already > 0 ? ' ' . $already . ' were already there.' : '')
                     // What Q2 turned into family, so the office sees it happened.
                     . ($family !== [] ? ' ' . implode(' ', $family) : '')
+                    /*
+                     * Counted, not listed. The names are already in the
+                     * sentence above; repeating them to say each also got a
+                     * login is noise.
+                     */
+                    . (count($accounts) > 0
+                        ? ' ' . count($accounts) . ' portal '
+                            . (count($accounts) === 1 ? 'account was' : 'accounts were')
+                            . ' issued — they activate with the code we emailed them.'
+                        : '')
+                    . ($withoutAccount !== []
+                        ? ' No portal account for ' . implode('; ', $withoutAccount)
+                        : '')
         );
     }
 

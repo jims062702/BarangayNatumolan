@@ -701,7 +701,8 @@ export default function ResidentCreate() {
             <p className="mb-4 rounded-xl bg-primary/10 px-4 py-2.5 text-xs leading-relaxed text-dark">
               <strong>A portal account is created automatically.</strong> If an email address is
               entered below, this resident is emailed their sign-in details right away. Their
-              password is their <strong>last name + birthday (MMDDYY)</strong> — e.g. Cruz062702 —
+              password is their <strong>last name + the month and year they were
+              born</strong> — e.g. Gasang062002 —
               and they activate the account themselves with a code we email them at first sign-in.
             </p>
 

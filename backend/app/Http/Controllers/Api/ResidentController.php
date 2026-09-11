@@ -2665,7 +2665,13 @@ class ResidentController extends BaseController
             // record type travels so the picker can mark them.
             // `life_status` travels so the picker can warn before a
             // certificate is filed for someone who has passed away.
-            ->get(['id', 'resident_number', 'record_type', 'life_status', 'first_name', 'middle_name', 'last_name', 'suffix', 'birthdate', 'zone_purok']);
+            //
+            // `contact_number` travels so a form that needs to reach the
+            // person it just attached does not make a clerk copy a number
+            // out of one record and into the next — which is how a digit
+            // gets dropped. The row already carries a birthdate and an
+            // address; a phone number sits inside the same staff-only gate.
+            ->get(['id', 'resident_number', 'record_type', 'life_status', 'first_name', 'middle_name', 'last_name', 'suffix', 'birthdate', 'zone_purok', 'contact_number']);
 
         return $this->success($residents, 'Search results');
     }

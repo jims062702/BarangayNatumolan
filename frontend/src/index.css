@@ -316,3 +316,136 @@ section[id] {
     animation: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Section backdrops — the shadcn background patterns, one per section
+
+   Six sections in a row, and a landing page that repeats one texture down all
+   of them reads as a single long page rather than as six places. Each gets a
+   different pattern; none is used twice.
+
+   Drawn on a ::before layer rather than on the section itself, because the
+   faded ones carry a mask and a mask on the section would fade the writing
+   with the lines. The parent isolates, so `z-index: -1` paints above the
+   section's background colour and below its content.
+
+   One line colour throughout, at the weight the reference uses: present when
+   you look for it, gone when you read. #e9e9ef on white is 1.06:1 — texture,
+   never something competing with a word.
+--------------------------------------------------------------------------- */
+.pattern {
+  position: relative;
+  isolation: isolate;
+}
+
+.pattern::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* Nothing at all for a reader who has asked for less movement and noise. */
+@media (prefers-reduced-motion: reduce) {
+  .pattern::before {
+    opacity: 0.5;
+  }
+}
+
+/* 1 — News: a field of dots, fading out at the foot. */
+.pattern-dots::before {
+  background-image: radial-gradient(#d9d9e3 1px, transparent 1px);
+  background-size: 22px 22px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+}
+
+/* 2 — About: the square grid, lit from the middle. The reference pattern. */
+.pattern-grid-spotlight::before {
+  background-image:
+    linear-gradient(to right, #e9e9ef 1px, transparent 1px),
+    linear-gradient(to bottom, #e9e9ef 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 40%, transparent 100%);
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 40%, transparent 100%);
+}
+
+/* 3 — Services: cross-hatch, both diagonals. */
+.pattern-crosshatch::before {
+  background-image:
+    repeating-linear-gradient(45deg, #e9e9ef 0 1px, transparent 1px 26px),
+    repeating-linear-gradient(-45deg, #e9e9ef 0 1px, transparent 1px 26px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 70%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 70%, transparent 100%);
+}
+
+/*
+   4 — Offices: a dashed grid.
+   The dashes come from a second pass that erases the line at intervals, which
+   is the only way to dash a gradient rule.
+*/
+.pattern-dashed-grid::before {
+  background-image:
+    linear-gradient(to right, #dcdce6 1px, transparent 1px),
+    linear-gradient(to bottom, #dcdce6 1px, transparent 1px);
+  background-size: 64px 64px;
+
+  /*
+    The dashes are cut by the mask, not painted.
+    Erasing them with a second white pass was the first attempt and it did
+    nothing: a 1px rule cannot be dashed along its own length by a gradient
+    that runs across it. Two repeating masks in UNION punch the gaps instead —
+    where neither is opaque the line is simply not there.
+  */
+  -webkit-mask-image:
+    repeating-linear-gradient(to right, #000 0 9px, transparent 9px 18px),
+    repeating-linear-gradient(to bottom, #000 0 9px, transparent 9px 18px),
+    linear-gradient(to bottom, #000 0%, #000 60%, transparent 100%);
+  -webkit-mask-composite: source-over, source-in;
+  mask-image:
+    repeating-linear-gradient(to right, #000 0 9px, transparent 9px 18px),
+    repeating-linear-gradient(to bottom, #000 0 9px, transparent 9px 18px),
+    linear-gradient(to bottom, #000 0%, #000 60%, transparent 100%);
+  mask-composite: add, intersect;
+}
+
+/*
+   5 — Officials: plus marks, where a grid's lines would have crossed.
+   Two short rules per cell, centred — the ticks a plan is drawn on.
+*/
+.pattern-plus::before {
+  background-image:
+    linear-gradient(to right, #e2e2ea 1px, transparent 1px),
+    linear-gradient(to bottom, #e2e2ea 1px, transparent 1px);
+  background-size: 44px 44px;
+
+  /*
+    INTERSECT, not add.
+    The union of a row band and a column band is most of the grid, which is
+    what the first attempt drew — a plain grid, indistinguishable from the
+    section above it. Intersecting them keeps only a small square at each
+    crossing, and the two rules inside that square are the plus.
+  */
+  -webkit-mask-image:
+    repeating-linear-gradient(to right, #000 0 13px, transparent 13px 44px),
+    repeating-linear-gradient(to bottom, #000 0 13px, transparent 13px 44px);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    repeating-linear-gradient(to right, #000 0 13px, transparent 13px 44px),
+    repeating-linear-gradient(to bottom, #000 0 13px, transparent 13px 44px);
+  mask-composite: intersect;
+  /* Both offset by half a segment so the plus is centred on the crossing. */
+  -webkit-mask-position: -6px -6px;
+  mask-position: -6px -6px;
+}
+
+/* 6 — Contact: wide ruled lines and one soft glow behind the form. */
+.pattern-ruled::before {
+  background-image:
+    linear-gradient(to bottom, #ececf2 1px, transparent 1px),
+    radial-gradient(ellipse 50% 45% at 70% 40%, rgba(114, 62, 195, 0.07), transparent 70%);
+  background-size: 34px 34px, 100% 100%;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 25%, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 25%, #000 100%);
+}

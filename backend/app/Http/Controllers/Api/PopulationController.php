@@ -873,6 +873,52 @@ class PopulationController extends BaseController
         );
     }
 
+    /**
+     * A new password, set at the counter.
+     *
+     * No code is emailed and none is asked for. The resident is standing
+     * there with a face and a record; sending a code to their phone so they
+     * can read it back to the clerk proves nothing the counter has not
+     * already proved, and it fails entirely for the resident whose phone is
+     * the thing they have lost.
+     *
+     * RESIDENTS ONLY. A clerk who could reset a colleague's password could
+     * sign in as the VAWC officer, and this office is not that office. The
+     * check is on the role, not on the menu.
+     */
+    public function resetAccountPassword(Request $request, User $user)
+    {
+        if ($user->role !== 'Resident') {
+            return $this->forbidden('Only resident accounts are managed here.');
+        }
+
+        $validated = $request->validate([
+            'password' => 'required|string|min:8|confirmed',
+        ], [
+            'password.confirmed' => 'The two passwords do not match.',
+        ]);
+
+        /* Same namespace, so no import. Shared with the self-service route
+           on purpose: both paths must revoke the old sessions, and one of
+           them forgetting to is the bug worth designing out. */
+        PasswordResetController::setPassword($user, $validated['password'], by: auth()->id());
+
+        /*
+         * An account that had never been activated is now usable.
+         *
+         * The activation code exists to prove the email belongs to them. A
+         * clerk who has just identified the person at the counter has proved
+         * the same thing by a better method, and leaving them locked out
+         * behind a code sent to an address they may not have would undo the
+         * visit they just made.
+         */
+        if (! $user->activated_at) {
+            $user->forceFill(['activated_at' => now()])->save();
+        }
+
+        return $this->success(null, 'Password set. Tell the resident to sign in with it now.');
+    }
+
     public function toggleResidentAccount(User $user)
     {
         if ($user->role !== 'Resident') {

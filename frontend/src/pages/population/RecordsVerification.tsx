@@ -6,7 +6,7 @@ import { toast } from "../../lib/toast";
 import { useAuth } from "../../contexts/AuthContext";
 import Card from "../../components/UI/Card";
 import PageHeader from "../../components/UI/PageHeader";
-import { inputClasses } from "../../components/UI/FormField";
+import SearchInput from "../../components/UI/SearchInput";
 
 /** The lookup payload — enough to confirm residency, nothing more. */
 interface VerificationResult {
@@ -177,13 +177,12 @@ export default function RecordsVerification() {
             aria-hidden="true"
             className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
           />
-          <input
+          <SearchInput
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            autoFocus
+            onChange={setQuery}
             placeholder="Start typing a name or resident number…"
-            aria-label="Search the registry"
-            className={`${inputClasses} pl-9 pr-24`}
+            label="Search the registry"
+            autoFocus
           />
           {loading && (
             <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs text-gray-400">

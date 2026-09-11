@@ -8,7 +8,7 @@ import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import PageHeader from "../../components/UI/PageHeader";
 import StatusBadge from "../../components/UI/StatusBadge";
-import { inputClasses } from "../../components/UI/FormField";
+import SearchInput from "../../components/UI/SearchInput";
 
 /**
  * The RBIM baseline census forms.
@@ -149,12 +149,12 @@ export default function RbimList() {
 
       <Card>
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          <input
+          <SearchInput
             value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            className={`${inputClasses} max-w-xs flex-1`}
+            onChange={(value) => { setSearch(value); setPage(1); }}
             placeholder="Search form no., household head, address…"
-            aria-label="Search census forms"
+            label="Search census forms"
+            className="max-w-sm flex-1"
           />
           <button
             type="button"

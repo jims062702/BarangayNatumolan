@@ -61,6 +61,9 @@ class VawcCase extends Model
         'survivor_id',
         // Who brought the complaint, when that is not the survivor.
         'reported_by_name',
+        /* Set when the reporter is on the register — a resident OR a
+           recorded non-resident. The name above stays either way. */
+        'reported_by_resident_id',
         'reported_by_relationship',
         'reported_by_contact',
         'violence_type',
@@ -92,6 +95,17 @@ class VawcCase extends Model
             'confidential_notes' => 'encrypted',
             'children_details' => 'encrypted',
         ];
+    }
+
+    /**
+     * Who brought the complaint, when they are on the register.
+     *
+     * Often nobody: the survivor reported it herself, or the reporter is a
+     * passer-by nobody has registered. `reported_by_name` covers those.
+     */
+    public function reporter()
+    {
+        return $this->belongsTo(Resident::class, 'reported_by_resident_id');
     }
 
     public function survivor(): BelongsTo

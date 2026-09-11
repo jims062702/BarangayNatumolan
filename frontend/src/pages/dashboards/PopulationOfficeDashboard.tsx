@@ -19,6 +19,8 @@ import {
 } from "recharts";
 import { api } from "../../lib/api";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
+import { useSettledState } from "../../hooks/useSettledState";
 import Card from "../../components/UI/Card";
 import StatTile from "../../components/UI/StatTile";
 import PageHeader from "../../components/UI/PageHeader";
@@ -128,7 +130,14 @@ function RegisterTip({
 }
 
 export default function PopulationOfficeDashboard() {
-  const [analytics, setAnalytics] = useState<Analytics | null>(null);
+  /*
+   * Compared by VALUE, not by reference.
+   *
+   * The poll re-fetches the same figures every twenty seconds and hands
+   * back a brand-new object each time, so the charts redrew themselves
+   * and the numbers counted up again on a page nobody had touched.
+   */
+  const [analytics, setAnalytics] = useSettledState<Analytics | null>(null);
   /*
    * Separate from `analytics === null`, because a refresh must not blank the
    * page it is refreshing. The skeleton is for the FIRST load only; after
@@ -139,6 +148,9 @@ export default function PopulationOfficeDashboard() {
   // Live updates: bump `tick` to re-run the fetch below.
   const [tick, setTick] = useState(0);
   useAutoRefresh(() => setTick((t) => t + 1), REFRESH.dashboard);
+
+  /* And within a second when somebody else touches one. */
+  usePulse("residents", () => setTick((t) => t + 1));
 
   useEffect(() => {
     api

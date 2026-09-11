@@ -7,6 +7,7 @@ import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import Modal from "../../components/UI/Modal";
@@ -38,8 +39,15 @@ export default function HouseholdList() {
   const [head, setHead] = useState<Resident | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const load = () => {
-    setLoading(true);
+  /*
+   * `silent` is for the background timer.
+   *
+   * A refresh nobody asked for must not blank the page somebody is
+   * reading; a first load or a filter change should still say it is
+   * working. Same fetch, and only the announcement differs.
+   */
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     api
       .get("/population/households", { params: { page } })
       .then((r) => {
@@ -56,7 +64,15 @@ export default function HouseholdList() {
   }, [page]);
 
   // Live updates without a manual refresh.
-  useAutoRefresh(load, REFRESH.staff);
+  useAutoRefresh(() => load(true), REFRESH.staff);
+
+  /*
+   * Somebody else's change, about a second after they make it.
+   *
+   * The timer above stays as a backstop: if the pulse cannot be
+   * reached the page is a few seconds stale rather than frozen.
+   */
+  usePulse("households", () => load(true));
 
 
   const openEdit = (h: Household) => {

@@ -5,6 +5,7 @@ import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import Modal from "../../components/UI/Modal";
@@ -76,6 +77,8 @@ export default function LuponCasesList() {
   const [period, setPeriod] = useState<Period>(ALL_TIME);
   const [windowLabel, setWindowLabel] = useState<string | null>(null);
   const [years, setYears] = useState<number[]>([]);
+  /* How many records each period holds, for the picker itself. */
+  const [periodCounts, setPeriodCounts] = useState<Record<string, number>>();
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   // So the footer can say WHICH rows are on screen, not only the page.
@@ -100,8 +103,15 @@ export default function LuponCasesList() {
   // Starts unset so the clerk makes a deliberate choice, not an accepted default.
   const [relationship, setRelationship] = useState("");
 
-  const load = () => {
-    setLoading(true);
+  /*
+   * `silent` is for the background timer.
+   *
+   * A refresh nobody asked for must not blank the page somebody is
+   * reading; a first load or a filter change should still say it is
+   * working. Same fetch, and only the announcement differs.
+   */
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     api
       .get("/lupon/cases", { params: { page, ...periodParams(period) } })
       .then((r) => {
@@ -110,6 +120,7 @@ export default function LuponCasesList() {
         setTotal(r.data.data.total ?? 0);
         setWindowLabel(r.data.data.window?.label ?? null);
         setYears(r.data.data.years ?? []);
+        setPeriodCounts(r.data.data.period_counts);
       })
       .finally(() => setLoading(false));
   };
@@ -127,7 +138,15 @@ export default function LuponCasesList() {
   };
 
   // Live updates without a manual refresh.
-  useAutoRefresh(load, REFRESH.staff);
+  useAutoRefresh(() => load(true), REFRESH.staff);
+
+  /*
+   * Somebody else's change, about a second after they make it.
+   *
+   * The timer above stays as a backstop: if the pulse cannot be
+   * reached the page is a few seconds stale rather than frozen.
+   */
+  usePulse("lupon_cases", () => load(true));
 
   /** Clears the intake draft. Used on cancel and after a successful file. */
   const resetIntake = () => {
@@ -227,6 +246,7 @@ export default function LuponCasesList() {
         value={period}
         onChange={changePeriod}
         years={years}
+        counts={periodCounts}
         showing={windowLabel}
         count={total}
       />

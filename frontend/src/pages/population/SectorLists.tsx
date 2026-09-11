@@ -17,6 +17,8 @@ import {
 } from "recharts";
 import { api } from "../../lib/api";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
+import { useSettledState } from "../../hooks/useSettledState";
 import Card from "../../components/UI/Card";
 import PageHeader from "../../components/UI/PageHeader";
 import DataTable from "../../components/UI/DataTable";
@@ -162,7 +164,14 @@ function SectorTip({
 }
 
 export default function SectorLists() {
-  const [report, setReport] = useState<Report | null>(null);
+  /*
+   * Compared by VALUE, not by reference.
+   *
+   * The poll re-fetches the same figures every twenty seconds and hands
+   * back a brand-new object each time, so the charts redrew themselves
+   * and the numbers counted up again on a page nobody had touched.
+   */
+  const [report, setReport] = useSettledState<Report | null>(null);
   const [selected, setSelected] = useState("all");
   const [residents, setResidents] = useState<Resident[]>([]);
   const [total, setTotal] = useState(0);
@@ -172,6 +181,9 @@ export default function SectorLists() {
 
   const [tick, setTick] = useState(0);
   useAutoRefresh(() => setTick((t) => t + 1), REFRESH.staff);
+
+  /* And within a second when somebody else touches one. */
+  usePulse("residents", () => setTick((t) => t + 1));
 
   useEffect(() => {
     api

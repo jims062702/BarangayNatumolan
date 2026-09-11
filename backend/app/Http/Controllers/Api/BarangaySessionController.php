@@ -35,6 +35,13 @@ class BarangaySessionController extends BaseController
 
         /* The same period question every other docket takes. session_date is
            a DATE, so it is compared as Manila calendar days. */
+        /*
+         * Counted BEFORE the window is applied, and after every other filter.
+         * "Today: 3" then means three of the cases the clerk is already
+         * looking at, not three in the register as a whole.
+         */
+        $periodCounts = DateWindow::counts($query, 'session_date', dateOnly: true);
+
         $window = DateWindow::fromRequest($request);
         $window?->applyTo($query, 'session_date', dateOnly: true);
 
@@ -43,6 +50,7 @@ class BarangaySessionController extends BaseController
         $payload = $sessions->toArray();
         $payload['window'] = $window?->toArray();
         $payload['years'] = DateWindow::yearsFrom(BarangaySession::min('session_date'));
+        $payload['period_counts'] = $periodCounts;
 
         return $this->success($payload, 'Barangay sessions retrieved');
     }

@@ -9,6 +9,7 @@ import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { formatWallClock } from "../../lib/datetime";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
 import RowAction, { RowActions } from "../../components/UI/RowAction";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
@@ -64,8 +65,15 @@ export default function LuponHearings() {
   const [formsFor, setFormsFor] = useState<LuponHearing | null>(null);
   const [forms, setForms] = useState<KpFormPayload | null>(null);
 
-  const load = () => {
-    setLoading(true);
+  /*
+   * `silent` is for the background timer.
+   *
+   * A refresh nobody asked for must not blank the page somebody is
+   * reading; a first load or a filter change should still say it is
+   * working. Same fetch, and only the announcement differs.
+   */
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     api
       .get("/lupon/hearings", { params: { page, when: view } })
       .then((r) => {
@@ -81,7 +89,15 @@ export default function LuponHearings() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, view]);
 
-  useAutoRefresh(load, REFRESH.staff);
+  useAutoRefresh(() => load(true), REFRESH.staff);
+
+  /*
+   * Somebody else's change, about a second after they make it.
+   *
+   * The timer above stays as a backstop: if the pulse cannot be
+   * reached the page is a few seconds stale rather than frozen.
+   */
+  usePulse("lupon_cases", () => load(true));
 
   const openSummons = (hearing: LuponHearing) => {
     setSummonsFor(hearing);

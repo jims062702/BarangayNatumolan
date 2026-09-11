@@ -11,6 +11,13 @@ class Appointment extends Model
         'appointment_number',
         'service_request_id',
         'resident_id',
+
+        /* A visitor the register has never heard of. One of resident_id or
+           guest_name is always set; the controller is what enforces it. */
+        'guest_name',
+        'guest_email',
+        'guest_contact',
+        'purpose',
         'office',
         'scheduled_datetime',
         'status',

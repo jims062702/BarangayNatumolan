@@ -8,9 +8,17 @@ interface PhoneInputProps {
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
+  /**
+   * Insisted on by the browser before the form is sent.
+   *
+   * The pattern rides along with it: ten digits or nothing. Without one, a
+   * half-typed 0917 satisfies `required` and fails at the server, which is a
+   * round trip to say what the field could have said itself.
+   */
+  required?: boolean;
 }
 
-export default function PhoneInput({ value, onChange, disabled }: PhoneInputProps) {
+export default function PhoneInput({ value, onChange, disabled, required }: PhoneInputProps) {
   /*
    * The 10-digit local part, from whichever of the three shapes is stored.
    *
@@ -39,6 +47,9 @@ export default function PhoneInput({ value, onChange, disabled }: PhoneInputProp
         onChange={(e) => handle(e.target.value)}
         placeholder="9XX XXX XXXX"
         maxLength={10}
+        required={required}
+        pattern="[0-9]{10}"
+        title="Ten digits, starting with 9 — for example 9171234567" 
         className="w-full bg-transparent px-3 py-2.5 text-sm text-dark outline-none placeholder:text-gray-400"
       />
     </div>

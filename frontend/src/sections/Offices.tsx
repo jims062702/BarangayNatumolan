@@ -5,7 +5,7 @@ import { offices } from "../data/offices";
 
 export default function Offices() {
   return (
-    <section id="offices" className="bg-white py-20 lg:py-28">
+    <section id="offices" className="pattern pattern-dashed-grid bg-white py-20 lg:py-28">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <SectionTitle
           eyebrow="Serving You"

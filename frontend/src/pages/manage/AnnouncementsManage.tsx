@@ -6,6 +6,9 @@ import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
+import { useUpload } from "../../hooks/useUpload";
+import FileField from "../../components/UI/FileField";
 import { useAuth } from "../../contexts/AuthContext";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
@@ -94,8 +97,15 @@ export default function AnnouncementsManage() {
   const kind = kindOf(form.category);
   const uses = (field: string) => KIND_FIELDS[kind].includes(field);
 
-  const load = () => {
-    setLoading(true);
+  /*
+   * `silent` is for the background timer.
+   *
+   * A refresh nobody asked for must not blank the page somebody is
+   * reading; a first load or a filter change should still say it is
+   * working. Same fetch, and only the announcement differs.
+   */
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     api
       .get("/sk/announcements", { params: { page, status: statusFilter || undefined } })
       .then((r) => {
@@ -113,7 +123,18 @@ export default function AnnouncementsManage() {
   }, [page, statusFilter]);
 
   // Live updates without a manual refresh.
-  useAutoRefresh(load, REFRESH.staff);
+  useAutoRefresh(() => load(true), REFRESH.staff);
+
+  /*
+   * Somebody else's change, about a second after they make it.
+   *
+   * The timer above stays as a backstop: if the pulse cannot be
+   * reached the page is a few seconds stale rather than frozen.
+   */
+  usePulse("announcements", () => load(true));
+
+  /* Progress for the photo, so a slow upload is not mistaken for a dead one. */
+  const upload = useUpload();
 
   /* Fields are filled in when the dialog OPENS, so a half-typed post never
      leaks into the next one after closing. */
@@ -175,12 +196,16 @@ export default function AnnouncementsManage() {
         payload.append("_method", "PUT");
         await api.post(`/sk/announcements/${editId}`, payload, {
           headers: { "Content-Type": "multipart/form-data" },
+          ...upload.tracker,
         });
+        upload.finish();
         toast("Post updated — the public site now shows the correction.");
       } else {
         await api.post("/sk/announcements", payload, {
           headers: { "Content-Type": "multipart/form-data" },
+          ...upload.tracker,
         });
+        upload.finish();
         toast(
           form.status === "Published"
             ? "Posted — it now appears in News & Announcements."
@@ -190,6 +215,9 @@ export default function AnnouncementsManage() {
       setOpen(false);
       load();
     } catch (err) {
+      /* Clear the bar. Left up, a failed upload sits at whatever percentage
+         it died on and reads as still working. */
+      upload.fail();
       toast(errorMessage(err), "error");
     } finally {
       setSaving(false);
@@ -665,11 +693,11 @@ export default function AnnouncementsManage() {
                   <span className="text-xs text-gray-500">Photo currently in use</span>
                 </div>
               )}
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(e) => setImage(e.target.files?.[0] ?? null)}
-                className="block w-full text-sm text-gray-600 file:mr-3 file:cursor-pointer file:rounded-full file:border-0 file:bg-primary/10 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primary"
+              <FileField
+                file={image}
+                onPick={setImage}
+                progress={upload.progress}
+                done={upload.done}
               />
             </div>
           </FormField>

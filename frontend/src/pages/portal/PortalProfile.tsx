@@ -6,6 +6,7 @@ import { personName } from "../../lib/names";
 import Card from "../../components/UI/Card";
 import PageHeader from "../../components/UI/PageHeader";
 import FamilyPanel from "../../components/FamilyPanel";
+import ChangePasswordCard from "../../components/Account/ChangePasswordCard";
 import { inputClasses } from "../../components/UI/FormField";
 import type { Family, User } from "../../types";
 
@@ -213,6 +214,16 @@ export default function PortalProfile() {
           <Row label="Household address" value={resident?.household?.street_address} />
           <Row label="Portal email" value={account?.email} />
         </Card>
+      </div>
+
+      {/*
+        Under the record and above the family, because that is the order of
+        how much it is used. A resident opens this page to check their
+        details; changing a password is the rarer errand, and it should be
+        findable without being the first thing in the way.
+      */}
+      <div className="mt-6">
+        <ChangePasswordCard />
       </div>
 
       <div className="mt-6">

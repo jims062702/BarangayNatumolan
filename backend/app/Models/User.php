@@ -151,7 +151,18 @@ class User extends Authenticatable
 
         $lastName = preg_replace('/[^A-Za-z0-9]/', '', (string) $resident->last_name);
 
-        return $lastName . $resident->birthdate->format('mdy');
+        /*
+         * Month and year, not the day.
+         *
+         * This used to be MMDDYY, which worked while the office typed a birth
+         * certificate. The census sheet asks only for a month and a year (Q5),
+         * and the register fills the DAY in itself — the last of that month,
+         * flagged as estimated. So a password built from the day was built
+         * from a number the system invented and the resident had never seen.
+         *
+         * Gasang, born June 2002, is Gasang062002.
+         */
+        return $lastName . $resident->birthdate->format('mY');
     }
 
     public function isStaff(): bool

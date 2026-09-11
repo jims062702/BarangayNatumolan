@@ -5,7 +5,7 @@ import { services } from "../data/services";
 
 export default function Services() {
   return (
-    <section id="services" className="bg-secondary py-20 lg:py-28">
+    <section id="services" className="pattern pattern-crosshatch bg-secondary py-20 lg:py-28">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <SectionTitle
           eyebrow="What We Offer"

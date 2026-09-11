@@ -12,6 +12,7 @@ import {
 import { api } from "../../lib/api";
 import { formatWallClock } from "../../lib/datetime";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { DashboardBodySkeleton } from "../../components/UI/Skeleton";
 import Card from "../../components/UI/Card";
 import StatTile from "../../components/UI/StatTile";
 import StatusBadge from "../../components/UI/StatusBadge";
@@ -96,6 +97,10 @@ export default function MainOfficeDashboard({ executive = false }: Props) {
   const [kpCounts, setKpCounts] = useState({ hearings: 0, repudiation: 0 });
   const [exec, setExec] = useState<ExecutiveSummary | null>(null);
 
+  /* Flipped when the first load SETTLES. The page has two quite different
+     shapes depending on who is looking, so each branch waits behind its own. */
+  const [ready, setReady] = useState(false);
+
   const load = async () => {
     const [summary, pending] = await Promise.all([
       api.get("/dashboard/summary"),
@@ -126,7 +131,9 @@ export default function MainOfficeDashboard({ executive = false }: Props) {
   };
 
   useEffect(() => {
-    load().catch(() => undefined);
+    load()
+      .catch(() => undefined)
+      .finally(() => setReady(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [executive]);
 
@@ -143,6 +150,10 @@ export default function MainOfficeDashboard({ executive = false }: Props) {
           subtitle="Everything awaiting your decision, and the barangay-wide service picture"
         />
 
+        {!ready ? (
+          <DashboardBodySkeleton tiles={6} tileColumns={3} cards={2} cardColumns={2} />
+        ) : (
+        <>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <StatTile label="Ready To Claim" value={stats.ready_to_claim ?? 0} icon={FiClock} tone="warning" />
           <StatTile label="Documents To Sign" value={exec?.documents_awaiting_count ?? 0} icon={FiFileText} tone="warning" />
@@ -374,6 +385,8 @@ export default function MainOfficeDashboard({ executive = false }: Props) {
             )}
           </Card>
         </div>
+        </>
+      )}
       </div>
     );
   }
@@ -387,6 +400,10 @@ export default function MainOfficeDashboard({ executive = false }: Props) {
 
       {/* The two certificate tiles are the clerk's own worklist: requests
           nobody has started, and signed documents waiting to be collected. */}
+      {!ready ? (
+        <DashboardBodySkeleton tiles={5} tileColumns={5} cards={1} cardColumns={1} />
+      ) : (
+      <>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatTile label="Pending Requests" value={stats.pending_requests ?? 0} icon={FiClipboard} tone="warning" />
         <StatTile label="Certificates To Start" value={stats.pending_certificates ?? 0} icon={FiClock} tone="danger" />
@@ -417,6 +434,8 @@ export default function MainOfficeDashboard({ executive = false }: Props) {
           />
         </Card>
       </div>
+      </>
+      )}
     </div>
   );
 }

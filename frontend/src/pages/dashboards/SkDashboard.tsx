@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { FiAward, FiBell, FiExternalLink, FiImage } from "react-icons/fi";
 import { api } from "../../lib/api";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
+import { DashboardBodySkeleton } from "../../components/UI/Skeleton";
 import Card from "../../components/UI/Card";
 import StatTile from "../../components/UI/StatTile";
 import PageHeader from "../../components/UI/PageHeader";
@@ -17,10 +19,20 @@ export default function SkDashboard() {
   const [tick, setTick] = useState(0);
   useAutoRefresh(() => setTick((t) => t + 1), REFRESH.dashboard);
 
+  /* And within a second when somebody else touches one. */
+  usePulse("announcements", () => setTick((t) => t + 1));
+
+  /* Flipped when the first fetch SETTLES — success or failure alike. Keyed
+     off "is the data still null", a request that fails would leave the
+     skeleton pulsing for ever with nothing to read. */
+  const [ready, setReady] = useState(false);
+
   useEffect(() => {
-    api.get("/sk/hero-slides").then((r) => setHeroCount((r.data.data ?? []).length)).catch(() => undefined);
-    api.get("/sk/officials").then((r) => setOfficialCount((r.data.data ?? []).length)).catch(() => undefined);
-    api.get("/sk/announcements").then((r) => setNewsCount(r.data.data.total ?? 0)).catch(() => undefined);
+    void Promise.allSettled([
+      api.get("/sk/hero-slides").then((r) => setHeroCount((r.data.data ?? []).length)),
+      api.get("/sk/officials").then((r) => setOfficialCount((r.data.data ?? []).length)),
+      api.get("/sk/announcements").then((r) => setNewsCount(r.data.data.total ?? 0)),
+    ]).then(() => setReady(true));
   }, [tick]);
 
   return (
@@ -40,6 +52,10 @@ export default function SkDashboard() {
         }
       />
 
+      {!ready ? (
+        <DashboardBodySkeleton tiles={3} tileColumns={3} cards={1} cardColumns={1} cardHeight={180} />
+      ) : (
+        <>
       <RevealGroup className="grid gap-4 sm:grid-cols-3">
         <StatTile label="Home Pictures" value={heroCount} icon={FiImage} />
         <StatTile label="News & Announcements" value={newsCount} icon={FiBell} tone="warning" />
@@ -65,6 +81,8 @@ export default function SkDashboard() {
           ))}
         </div>
       </Card>
+        </>
+      )}
     </div>
   );
 }

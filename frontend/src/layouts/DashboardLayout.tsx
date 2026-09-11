@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
-import { FiBell, FiLogOut, FiMenu, FiSidebar, FiVolume2, FiVolumeX, FiX } from "react-icons/fi";
+import { FiBell, FiExternalLink, FiLogOut, FiMenu, FiSidebar, FiVolume2, FiVolumeX, FiX } from "react-icons/fi";
 import { useAuth, homePathFor } from "../contexts/AuthContext";
 import { useSignOut } from "../hooks/useSignOut";
 import ErrorBoundary from "../components/ErrorBoundary";
+import { PageBodySkeleton } from "../components/UI/Skeleton";
 import ChatWidget from "../components/ChatWidget/ChatWidget";
 import { menuFor } from "../lib/menu";
 import { api } from "../lib/api";
@@ -334,6 +335,35 @@ export default function DashboardLayout() {
         ))}
       </nav>
 
+      {/*
+        The public site, from anywhere.
+        
+        It lived on the SK dashboard alone, which is the one office that
+        edits the landing page — but every desk has reason to look at what a
+        resident actually sees, and hunting for the one page that links to it
+        is not a way to find out.
+
+        In the sidebar rather than duplicated into seven dashboard headers:
+        the same link on every page for every role, and one place to change.
+      */}
+      <div className={`shrink-0 border-t border-white/15 ${compact ? "px-2 py-3" : "px-3 py-3"}`}>
+        <a
+          href="/"
+          target="_blank"
+          /* noreferrer, not just noopener: the staff URL a clerk came from is
+             nobody's business on the public side. */
+          rel="noreferrer"
+          title={compact ? "View public site" : undefined}
+          aria-label="View public site (opens in a new tab)"
+          className={`flex items-center rounded-xl py-2.5 text-sm font-medium text-white/85 transition-colors hover:bg-white/10 hover:text-white ${
+            compact ? "justify-center px-2" : "gap-3 px-3"
+          }`}
+        >
+          <FiExternalLink className="h-4.5 w-4.5 shrink-0" aria-hidden="true" />
+          {!compact && <span className="flex-1 truncate">View public site</span>}
+        </a>
+      </div>
+
       {!compact && (
         <div className="border-t border-white/15 px-5 py-4 text-[11px] text-white/60">
           Tagoloan, Misamis Oriental
@@ -424,7 +454,17 @@ export default function DashboardLayout() {
           {/* Scoped so a failing page keeps the sidebar and topbar usable
               instead of blanking the whole screen. */}
           <ErrorBoundary label="This page could not be displayed">
-            <Outlet />
+            {/*
+              The page's own boundary, inside the shell.
+
+              Without it a move between two pages fell all the way out to the
+              router's fallback, which redraws the whole app shell — so the
+              sidebar and topbar already on screen flickered away and came
+              back to sit in exactly the same place. Only the body waits now.
+            */}
+            <Suspense fallback={<PageBodySkeleton />}>
+              <Outlet />
+            </Suspense>
           </ErrorBoundary>
         </main>
       </div>

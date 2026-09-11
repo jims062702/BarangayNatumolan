@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Support\SequenceNumber;
 
 use App\Models\CertificateClearance;
+use App\Support\CertificateCatalogue;
 use App\Models\Resident;
 use App\Models\ServiceRequest;
 use Illuminate\Http\Request;
@@ -285,7 +286,8 @@ class ServiceRequestController extends BaseController
             'service_request_id' => $serviceRequest->id,
             'certificate_type' => $type,
             'purpose' => $serviceRequest->purpose ?: $type,
-            'fee_amount' => CertificateController::FEES[$type] ?? 0,
+            /* Provisional until the clerk picks the ordinance's purpose. */
+            'fee_amount' => CertificateCatalogue::feeFor($type, $serviceRequest->purpose) ?? 0,
             'is_exempt' => false,
             // The clerk is working on it right now — no queue, no decision.
             'status' => 'Processing',

@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { FiBell, FiSettings, FiUserPlus, FiUsers } from "react-icons/fi";
 import { api } from "../../lib/api";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
+import { DashboardBodySkeleton } from "../../components/UI/Skeleton";
 import Card from "../../components/UI/Card";
 import StatTile from "../../components/UI/StatTile";
 import PageHeader from "../../components/UI/PageHeader";
@@ -18,18 +20,22 @@ export default function AdminDashboard() {
   const [tick, setTick] = useState(0);
   useAutoRefresh(() => setTick((t) => t + 1), REFRESH.dashboard);
 
+  /* And within a second when somebody else touches one. */
+  usePulse("users", () => setTick((t) => t + 1));
+
+  /* Flipped when the first fetch SETTLES — success or failure alike. Keyed
+     off "is the data still null", a request that fails would leave the
+     skeleton pulsing for ever with nothing to read. */
+  const [ready, setReady] = useState(false);
+
   useEffect(() => {
-    api
-      .get("/admin/users")
-      .then((r) => {
+    void Promise.allSettled([
+      api.get("/admin/users").then((r) => {
         setTotalUsers(r.data.data.total ?? 0);
         setUsers(r.data.data.data ?? []);
-      })
-      .catch(() => undefined);
-    api
-      .get("/population/accounts")
-      .then((r) => setPortalAccounts(r.data.data.total ?? 0))
-      .catch(() => undefined);
+      }),
+      api.get("/population/accounts").then((r) => setPortalAccounts(r.data.data.total ?? 0)),
+    ]).then(() => setReady(true));
   }, [tick]);
 
   const staffCount = users.filter((u) => u.role !== "Resident").length;
@@ -50,6 +56,10 @@ export default function AdminDashboard() {
         }
       />
 
+      {!ready ? (
+        <DashboardBodySkeleton tiles={4} tileColumns={4} cards={2} cardColumns={2} />
+      ) : (
+        <>
       <RevealGroup className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Total Accounts" value={totalUsers} icon={FiUsers} />
         <StatTile label="Staff Accounts (page)" value={staffCount} icon={FiSettings} tone="success" />
@@ -86,6 +96,8 @@ export default function AdminDashboard() {
           </ul>
         </Card>
       </div>
+        </>
+      )}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { formatWallClock } from "../../lib/datetime";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import Modal from "../../components/UI/Modal";
@@ -17,6 +18,7 @@ import ChoiceGroup from "../../components/UI/ChoiceGroup";
 import PhoneInput from "../../components/UI/PhoneInput";
 import ResidentPicker from "../../components/ResidentPicker";
 import ResidentMultiPicker from "../../components/ResidentMultiPicker";
+import { personName } from "../../lib/names";
 import type { Resident, VawcCase } from "../../types";
 import PeriodFilter, {
   ALL_TIME,
@@ -184,6 +186,8 @@ export default function VawcCasesList() {
   const [period, setPeriod] = useState<Period>(ALL_TIME);
   const [windowLabel, setWindowLabel] = useState<string | null>(null);
   const [years, setYears] = useState<number[]>([]);
+  /* How many records each period holds, for the picker itself. */
+  const [periodCounts, setPeriodCounts] = useState<Record<string, number>>();
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   // So the footer can say WHICH rows are on screen, not only the page.
@@ -209,6 +213,36 @@ export default function VawcCasesList() {
   // reporting-party fields stay locked until the officer says otherwise.
   const [reportedByOther, setReportedByOther] = useState(false);
   const [reportedByName, setReportedByName] = useState("");
+  /*
+   * The reporter as a register record, when they are one.
+   *
+   * Held alongside the name rather than instead of it: whichever way the
+   * clerk answered, the case keeps a readable name.
+   */
+  const [reportedByResident, setReportedByResident] = useState<Resident | null>(null);
+
+  /*
+   * Attach the reporter and take their number with them.
+   *
+   * Cleared as well as set: picking Ana after Ben must not leave Ben's
+   * number sitting in the box under Ana's name.
+   */
+  const pickReporter = (person: Resident | null) => {
+    setReportedByResident(person);
+    setReportedByContact(person?.contact_number ?? "");
+  };
+  const [reporterOffRegister, setReporterOffRegister] = useState(false);
+
+  /*
+   * The number comes from the register, not from the clerk.
+   *
+   * True only when a picked person actually has one on file — which is the
+   * minority — so everything downstream reads this rather than re-deriving
+   * the same three conditions and getting one of them wrong.
+   */
+  const fromRecord = Boolean(
+    reportedByOther && !reporterOffRegister && reportedByResident?.contact_number,
+  );
   const [reportedByRelationship, setReportedByRelationship] = useState("");
   const [reportedByContact, setReportedByContact] = useState("");
   // Recorded, not assumed: an intake encoded the next morning must carry the
@@ -283,8 +317,15 @@ export default function VawcCasesList() {
     reported_by_contact: "",
   });
 
-  const load = () => {
-    setLoading(true);
+  /*
+   * `silent` is for the background timer.
+   *
+   * A refresh nobody asked for must not blank the page somebody is
+   * reading; a first load or a filter change should still say it is
+   * working. Same fetch, and only the announcement differs.
+   */
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     api
       .get("/vawc/cases", { params: { page, ...periodParams(period) } })
       .then((r) => {
@@ -295,6 +336,7 @@ export default function VawcCasesList() {
            one the buttons imply — a month with no year means this year. */
         setWindowLabel(r.data.data.window?.label ?? null);
         setYears(r.data.data.years ?? []);
+        setPeriodCounts(r.data.data.period_counts);
       })
       .finally(() => setLoading(false));
   };
@@ -312,10 +354,20 @@ export default function VawcCasesList() {
   };
 
   // Live updates without a manual refresh.
-  useAutoRefresh(load, REFRESH.staff);
+  useAutoRefresh(() => load(true), REFRESH.staff);
+
+  /*
+   * Somebody else's change, about a second after they make it.
+   *
+   * The timer above stays as a backstop: if the pulse cannot be
+   * reached the page is a few seconds stale rather than frozen.
+   */
+  usePulse("vawc_cases", () => load(true));
 
   /** Clears the confidential intake draft — nothing may survive a cancel. */
   const resetIntake = () => {
+    setReportedByResident(null);
+    setReporterOffRegister(false);
     setSurvivor(null);
     setViolenceType("");
     setRelationship("");
@@ -361,7 +413,15 @@ export default function VawcCasesList() {
             ? (relationshipOther.trim() || "Other")
             : (relationship || undefined),
         dependent_ids: dependents.map((d) => d.id),
-        reported_by_name: reportedByOther ? reportedByName || undefined : undefined,
+        reported_by_name: reportedByOther
+          ? (reporterOffRegister
+              ? reportedByName || undefined
+              /* The picked person's name travels too, so the case still reads
+                 correctly if that register record is ever removed. */
+              : (reportedByResident ? personName(reportedByResident) : undefined))
+          : undefined,
+        reported_by_resident_id:
+          reportedByOther && !reporterOffRegister ? reportedByResident?.id : undefined,
         reported_by_relationship: reportedByOther ? reportedByRelationship || undefined : undefined,
         reported_by_contact: reportedByOther ? reportedByContact || undefined : undefined,
         immediate_needs: needs.length ? needs : undefined,
@@ -481,6 +541,7 @@ export default function VawcCasesList() {
         value={period}
         onChange={changePeriod}
         years={years}
+        counts={periodCounts}
         showing={windowLabel}
         count={total}
       />
@@ -584,14 +645,42 @@ export default function VawcCasesList() {
               Reported by someone other than the survivor
             </label>
             <div className="grid gap-4 sm:grid-cols-3">
-              <FormField label="Name">
-                <input
-                  value={reportedByName}
-                  disabled={!reportedByOther}
-                  onChange={(e) => setReportedByName(e.target.value)}
-                  className={inputClasses}
-                  placeholder="Neighbour, relative, official…"
-                />
+              <FormField label="Name" plain>
+                {reporterOffRegister ? (
+                  <input
+                    value={reportedByName}
+                    disabled={!reportedByOther}
+                    onChange={(e) => setReportedByName(e.target.value)}
+                    className={inputClasses}
+                    placeholder="Neighbour, relative, official…"
+                  />
+                ) : (
+                  /* Searches the whole register — residents and recorded
+                     non-residents alike. */
+                  <ResidentPicker
+                    value={reportedByResident}
+                    onChange={pickReporter}
+                    excludeIds={survivor ? [survivor.id] : []}
+                  />
+                )}
+
+                {reportedByOther && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReporterOffRegister((was) => !was);
+                      setReportedByResident(null);
+                      setReportedByName("");
+                      /* The number belonged to the person being dropped. */
+                      setReportedByContact("");
+                    }}
+                    className="mt-1.5 cursor-pointer text-xs font-semibold text-primary hover:underline"
+                  >
+                    {reporterOffRegister
+                      ? "Find them on the register instead"
+                      : "Not on the register — type the name"}
+                  </button>
+                )}
               </FormField>
               <FormField label="Relationship to survivor">
                 <input
@@ -601,11 +690,33 @@ export default function VawcCasesList() {
                   className={inputClasses}
                 />
               </FormField>
-              <FormField label="Contact number">
+              {/*
+                Three situations, and the field says which one it is in.
+
+                A resident WITH a number on file: taken from their record and
+                locked, because the record is the source and editing a copy of
+                it here would quietly disagree with it.
+
+                A resident WITHOUT one — which is most of the register — stays
+                typeable. An empty locked box would read as broken, and the
+                desk still needs a way to reach them.
+
+                Somebody not on the register: typed, as it always was.
+              */}
+              <FormField
+                label="Contact number"
+                hint={
+                  fromRecord
+                    ? "From their resident record"
+                    : reportedByOther && !reporterOffRegister && reportedByResident
+                      ? "No number on their record — type one"
+                      : undefined
+                }
+              >
                 <PhoneInput
                   value={reportedByContact}
                   onChange={setReportedByContact}
-                  disabled={!reportedByOther}
+                  disabled={!reportedByOther || fromRecord}
                 />
               </FormField>
             </div>

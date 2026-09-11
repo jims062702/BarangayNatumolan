@@ -69,6 +69,7 @@ export default function PeriodFilter({
   /** What the server says it actually applied — "September 2026", "This week". */
   showing,
   count,
+  counts,
   noun = "case",
 }: {
   value: Period;
@@ -78,6 +79,14 @@ export default function PeriodFilter({
   showing?: string | null;
   count?: number;
   noun?: string;
+  /*
+   * How many records fall in each period, keyed by preset ("all", "today",
+   * "week", "half_year", "year").
+   *
+   * A row of six periods with no numbers on them makes somebody click all six
+   * to find out where the work is. With them the answer is on the chip.
+   */
+  counts?: Record<string, number>;
 }) {
   /* A preset and a named month are different questions, so choosing one
      clears the other rather than quietly losing to it on the server. */
@@ -95,6 +104,23 @@ export default function PeriodFilter({
             className={chip(!value.month && !value.year && value.period === preset.key)}
           >
             {preset.label}
+            {/*
+              The count rides in the label rather than in a separate badge, so
+              a screen reader reads "This week, 4" as one thing. Absent — not
+              zero — while the counts have not arrived: a chip that says 0 and
+              then says 4 has told the reader something untrue.
+            */}
+            {counts?.[preset.key || "all"] !== undefined && (
+              <span
+                className={`ml-1.5 text-xs font-semibold ${
+                  !value.month && !value.year && value.period === preset.key
+                    ? "text-white/75"
+                    : "text-gray-400"
+                }`}
+              >
+                {counts[preset.key || "all"]}
+              </span>
+            )}
           </button>
         ))}
 

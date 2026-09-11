@@ -6,6 +6,7 @@ import { confirmAction } from "../lib/confirm";
 import Modal from "./UI/Modal";
 import { inputClasses } from "./UI/FormField";
 import type { Resident } from "../types";
+import SearchInput from "../components/UI/SearchInput";
 
 const PUROKS = ["Purok 1", "Purok 2", "Purok 3", "Purok 4", "Purok 5"];
 
@@ -290,12 +291,12 @@ export default function ResidentTransferModal({
             searched for on screen is what they can take away.
           */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <input
+            <SearchInput
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(value) => setSearch(value)}
               placeholder="Search a name or number…"
-              aria-label="Search"
-              className={inputClasses}
+              label="Search"
+              className="max-w-sm flex-1"
             />
             <select
               value={purok}

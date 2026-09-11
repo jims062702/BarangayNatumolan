@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import {  FiActivity, FiAlertTriangle, FiHeart, FiSmile , FiPlus } from "react-icons/fi";
 import { api } from "../../lib/api";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
+import { DashboardBodySkeleton } from "../../components/UI/Skeleton";
 import Card from "../../components/UI/Card";
 import StatTile from "../../components/UI/StatTile";
 import StatusBadge from "../../components/UI/StatusBadge";
@@ -26,17 +28,25 @@ export default function HealthStationDashboard() {
   const [tick, setTick] = useState(0);
   useAutoRefresh(() => setTick((t) => t + 1), REFRESH.dashboard);
 
+  /* And within a second when somebody else touches one. */
+  usePulse("health", () => setTick((t) => t + 1));
+
+  /* Flipped when the first fetch SETTLES — success or failure alike. Keyed
+     off "is the data still null", a request that fails would leave the
+     skeleton pulsing for ever with nothing to read. */
+  const [ready, setReady] = useState(false);
+
   useEffect(() => {
-    api.get("/dashboard/summary").then((r) => setTodayVisits(r.data.data.quick_stats?.today_visits ?? 0)).catch(() => undefined);
-    api.get("/health/reports/coverage").then((r) => setCoverage(r.data.data)).catch(() => undefined);
-    Promise.all([
-      api.get("/health/immunization", { params: { status: "Missed" } }),
-      api.get("/health/immunization", { params: { status: "Pending" } }),
-    ])
-      .then(([missed, pending]) =>
+    void Promise.allSettled([
+      api.get("/dashboard/summary").then((r) => setTodayVisits(r.data.data.quick_stats?.today_visits ?? 0)),
+      api.get("/health/reports/coverage").then((r) => setCoverage(r.data.data)),
+      Promise.all([
+        api.get("/health/immunization", { params: { status: "Missed" } }),
+        api.get("/health/immunization", { params: { status: "Pending" } }),
+      ]).then(([missed, pending]) =>
         setAttention([...(missed.data.data.data ?? []), ...(pending.data.data.data ?? [])])
-      )
-      .catch(() => undefined);
+      ),
+    ]).then(() => setReady(true));
   }, [tick]);
 
   return (
@@ -54,6 +64,10 @@ export default function HealthStationDashboard() {
         }
       />
 
+      {!ready ? (
+        <DashboardBodySkeleton tiles={4} tileColumns={4} cards={1} cardColumns={1} />
+      ) : (
+        <>
       <RevealGroup className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Visits Today" value={todayVisits} icon={FiActivity} />
         <StatTile label="Visits This Year" value={coverage?.total_visits ?? 0} icon={FiHeart} tone="success" />
@@ -96,6 +110,8 @@ export default function HealthStationDashboard() {
           )}
         </Card>
       </div>
+        </>
+      )}
     </div>
   );
 }

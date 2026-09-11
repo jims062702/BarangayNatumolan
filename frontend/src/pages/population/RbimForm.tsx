@@ -1822,7 +1822,14 @@ export default function RbimForm() {
    * office pressed Submit, the form had unsaved edits, and leaving for the
    * list halfway through would abandon the thing they actually asked for.
    */
-  const save = async (event?: FormEvent, thenLeave = true) => {
+  /**
+   * Returns the record's id, which the caller may need next.
+   *
+   * A new form has no id until this runs — and Submit is the one caller that
+   * has to know it, because registering posts to /rbim/{id}/submit. Reading
+   * it back off the route afterwards is a race with the navigation.
+   */
+  const save = async (event?: FormEvent, thenLeave = true): Promise<string | undefined> => {
     event?.preventDefault();
     setSaving(true);
 
@@ -1859,6 +1866,8 @@ export default function RbimForm() {
          * about to disappear.
          */
         if (thenLeave) navigate("/population/rbim");
+
+        return id;
       } else {
         const r = await api.post("/rbim", payload);
         pristine.current = snapshot();
@@ -1873,6 +1882,8 @@ export default function RbimForm() {
         navigate(thenLeave ? "/population/rbim" : `/population/rbim/${r.data.data.id}`, {
           replace: true,
         });
+
+        return String(r.data.data.id);
       }
     } catch (err) {
       toast(errorMessage(err), "error");
@@ -1893,7 +1904,39 @@ export default function RbimForm() {
    * Confirmed by name first, because it is the one press in this module that
    * writes to the register.
    */
+  /*
+   * The record Submit is about to register.
+   *
+   * Held here rather than read off the route: on a brand-new form the id does
+   * not exist until the save inside submitForm creates it, and the navigation
+   * that puts it in the URL has not necessarily landed by the time the office
+   * presses Register in the preview.
+   */
+  const registering_id = useRef<string | undefined>(undefined);
+
   const submitForm = async () => {
+    /*
+     * Check first, save second.
+     *
+     * A new form used to have no Submit button at all: it was hidden until a
+     * draft existed, so the only way to reach it was to save a draft, leave,
+     * and open the form again. Registering in one sitting is the ordinary
+     * case, and it was the one path the screen did not offer.
+     *
+     * The gaps are read before anything is written so an incomplete sheet
+     * does not leave a half-filled draft behind on a button press that was
+     * never going to succeed.
+     */
+    const gapsFirst = registrationGaps();
+
+    if (gapsFirst.length) {
+      setGaps(gapsFirst);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      toast(`${gapsFirst.length} thing(s) still missing — listed at the top of the form.`, "warning");
+
+      return;
+    }
+
     // What is on screen has to be what gets registered.
     if (isDirty()) {
       const keep = await confirmAction({
@@ -1905,22 +1948,14 @@ export default function RbimForm() {
 
       if (!keep) return;
       // Stay here: the submit is the next thing that happens.
-      await save(undefined, false);
+      registering_id.current = await save(undefined, false);
+    } else {
+      registering_id.current = id;
     }
 
-    /*
-     * Everything the register will need, before anything is sent.
-     *
-     * The server refuses an incomplete sheet as a whole and says why, which
-     * is right — but it says it in a toast, and a toast is gone before an
-     * office of one has finished reading the second line of it.
-     */
-    const gaps = registrationGaps();
-
-    if (gaps.length) {
-      setGaps(gaps);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      toast(`${gaps.length} thing(s) still missing — listed at the top of the form.`, "warning");
+    if (!registering_id.current) {
+      /* The save failed and said so; adding a second toast would only bury
+         the first. */
       return;
     }
 
@@ -1935,7 +1970,7 @@ export default function RbimForm() {
     setRegistering(true);
 
     try {
-      const r = await api.post(`/rbim/${id}/submit`);
+      const r = await api.post(`/rbim/${registering_id.current ?? id}/submit`);
       setPreviewOpen(false);
       toast(r.data.message);
 
@@ -2027,7 +2062,17 @@ export default function RbimForm() {
         <div className="space-y-4">
           <p className="text-xs leading-relaxed text-gray-500">
             Read this against the paper sheet. Submitting puts everybody marked below on the
-            barangay register; anybody already there is left alone.
+            barangay register; anybody already there is left alone.{" "}
+            {/*
+              Said here because this is where the email addresses are on
+              screen. The account is no longer a second job to remember — it
+              is part of registering, and the only thing that decides who
+              gets one is whether Q1 carries an email address.
+            */}
+            <span className="text-gray-600">
+              Everybody with an email address below is also given a portal account and emailed
+              their sign-in details — no separate step.
+            </span>
           </p>
 
           <div className="rounded-xl border border-gray p-3">
@@ -2102,7 +2147,13 @@ export default function RbimForm() {
                         mem.q35_stay_years != null ? `${mem.q35_stay_years}y` : null,
                         mem.q35_stay_months != null ? `${mem.q35_stay_months}m` : null,
                       ].filter(Boolean).join(" ") || "—"],
-                      ["Email", String(mem.email ?? "") || "—"],
+                      /*
+                        Not "—". A missing email is the difference between a
+                        resident who can use the portal and one who cannot,
+                        and this is the last screen where it can be typed in.
+                      */
+                      ["Email", String(mem.email ?? "")
+                        || (willRegister && !already ? "none — no portal account" : "—")],
                       ["Phone", String(mem.contact_number ?? "") || "—"],
                     ].map(([label, value]) => (
                       <div key={label} className="flex justify-between gap-3">
@@ -2130,7 +2181,7 @@ export default function RbimForm() {
               onClick={() => void registerHousehold()}
               className="cursor-pointer rounded-full bg-success px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:opacity-90 disabled:opacity-60"
             >
-              {registering ? "Registering…" : "Everything is right — register them"}
+              {registering ? "Registering…" : "Submit — register this household"}
             </button>
           </div>
         </div>
@@ -3498,15 +3549,27 @@ export default function RbimForm() {
             {saving ? "Saving…" : editing ? "Save changes" : "Save as draft"}
           </button>
 
-          {editing && (
-            <button
-              type="button"
-              onClick={submitForm}
-              className="cursor-pointer rounded-full bg-success px-8 py-3 text-sm font-semibold text-white transition-colors hover:opacity-90"
-            >
-              {status === "Draft" ? "Submit — register this household" : "Submit again"}
-            </button>
-          )}
+          {/*
+            Shown on a new form too.
+
+            It used to appear only once a draft existed, so registering a
+            household in one sitting was impossible: the office had to save,
+            leave, and come back for the button. Pressing it on a new form
+            now saves first and previews second.
+
+            And it says PREVIEW, because that is what it does. Labelled
+            "Submit — register this household" it promised the last step and
+            delivered a dialogue, which is the kind of small lie that teaches
+            somebody to click through dialogues without reading them.
+          */}
+          <button
+            type="button"
+            onClick={submitForm}
+            disabled={saving || registering}
+            className="cursor-pointer rounded-full bg-success px-8 py-3 text-sm font-semibold text-white transition-colors hover:opacity-90 disabled:opacity-60"
+          >
+            {status === "Submitted" ? "Preview and submit again" : "Preview form"}
+          </button>
         </div>
       </form>
     </div>

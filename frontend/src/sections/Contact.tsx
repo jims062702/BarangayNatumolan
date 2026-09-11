@@ -3,6 +3,7 @@ import { FaFacebookF, FaFacebookMessenger, FaEnvelope } from "react-icons/fa";
 import { FiMapPin, FiPhone, FiMail, FiClock } from "react-icons/fi";
 import SectionTitle from "../components/SectionTitle/SectionTitle";
 import ContactForm from "../components/ContactForm/ContactForm";
+import AppointmentRequestForm from "../components/AppointmentRequest/AppointmentRequestForm";
 import Reveal from "../components/UI/Reveal";
 
 interface InfoItem {
@@ -53,7 +54,7 @@ const socials: SocialLink[] = [
 
 export default function Contact() {
   return (
-    <section id="contact" className="bg-white py-20 lg:py-28">
+    <section id="contact" className="pattern pattern-ruled bg-white py-20 lg:py-28">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <SectionTitle
           eyebrow="Get In Touch"
@@ -107,6 +108,23 @@ export default function Contact() {
             </div>
           </Reveal>
         </div>
+
+        {/*
+          The appointment request, across the full width.
+
+          It was in the right-hand column, which is half a page wide — so
+          seven fields stacked into a column tall enough to scroll past the
+          chat button. Given the whole width it reads as one short form
+          instead of a long one.
+        */}
+        <Reveal delay={0.05} className="mt-12">
+          <div
+            id="appointment"
+            className="rounded-3xl border border-primary/15 bg-white p-6 shadow-lg shadow-primary/5 sm:p-8 lg:p-10"
+          >
+            <AppointmentRequestForm />
+          </div>
+        </Reveal>
 
         {/* Map */}
         <Reveal delay={0.1} className="mt-14">

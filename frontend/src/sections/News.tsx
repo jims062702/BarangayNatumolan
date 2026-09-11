@@ -150,7 +150,7 @@ export default function News() {
   const totalPosts = Object.values(counts).reduce((sum, n) => sum + n, 0);
 
   return (
-    <section id="news" className="bg-secondary py-20 lg:py-28">
+    <section id="news" className="pattern pattern-dots bg-secondary py-20 lg:py-28">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <SectionTitle
           eyebrow="Stay Updated"

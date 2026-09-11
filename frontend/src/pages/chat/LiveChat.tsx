@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { FiCheckCircle, FiUser } from "react-icons/fi";
+import { FiCheckCircle, FiCornerUpLeft, FiUser } from "react-icons/fi";
 import { api, errorMessage } from "../../lib/api";
 import ShortcutComposer, { type Shortcut } from "../../components/chat/ShortcutComposer";
 import { toast } from "../../lib/toast";
@@ -277,6 +277,19 @@ export default function LiveChat() {
                     {conversation.is_resident && (
                       <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-primary">
                         <FiUser className="h-3 w-3" aria-hidden="true" /> Registered resident
+                      </span>
+                    )}
+
+                    {/*
+                      Marked before it is opened, not after. The whole cost of
+                      missing this is paid in the first reply.
+                    */}
+                    {(conversation.follow_up_count ?? 0) > 0 && (
+                      <span className="mt-1 flex w-fit items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                        <FiCornerUpLeft className="h-3 w-3" aria-hidden="true" />
+                        {conversation.follow_up_count === 1
+                          ? "Follow-up"
+                          : `Follow-up ×${conversation.follow_up_count}`}
                       </span>
                     )}
                   </button>

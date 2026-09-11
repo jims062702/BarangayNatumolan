@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { FiPrinter } from "react-icons/fi";
 import { api } from "../../lib/api";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
+import { useSettledState } from "../../hooks/useSettledState";
 import Card from "../../components/UI/Card";
 import PageHeader from "../../components/UI/PageHeader";
 import BandChart from "../../components/UI/BandChart";
@@ -56,7 +58,14 @@ const CRITICAL = "#DC2626";
 
 /** 2.7 — anonymized periodic reporting and VAW Desk functionality. */
 export default function VawcReports() {
-  const [stats, setStats] = useState<Stats | null>(null);
+  /*
+   * Compared by VALUE, not by reference.
+   *
+   * The poll re-fetches the same figures every twenty seconds and hands
+   * back a brand-new object each time, so the charts redrew themselves
+   * and the numbers counted up again on a page nobody had touched.
+   */
+  const [stats, setStats] = useSettledState<Stats | null>(null);
   const year = new Date().getFullYear();
 
   const load = () => {
@@ -65,6 +74,9 @@ export default function VawcReports() {
 
   useEffect(load, []);
   useAutoRefresh(load, REFRESH.dashboard);
+
+  /* And within a second when somebody else touches one. */
+  usePulse("vawc_cases", load);
 
   return (
     <div>

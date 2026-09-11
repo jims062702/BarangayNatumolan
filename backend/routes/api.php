@@ -6,6 +6,8 @@ use App\Http\Controllers\Api\AdminUserController;
 use App\Http\Controllers\Api\AnnouncementController;
 use App\Http\Controllers\Api\AppointmentController;
 use App\Http\Controllers\Api\BarangaySessionController;
+use App\Http\Controllers\Api\PasswordResetController;
+use App\Http\Controllers\Api\PulseController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CertificateController;
 use App\Http\Controllers\Api\ChatController;
@@ -40,12 +42,45 @@ Route::post('auth/login', [AuthController::class, 'login']);
 Route::post('auth/activate', [AuthController::class, 'activate'])->middleware('throttle:10,1');
 Route::post('auth/resend-activation', [AuthController::class, 'resendActivationCode'])->middleware('throttle:3,1');
 
+/*
+| A forgotten password, answered by the person's own inbox.
+|
+| Public, because somebody who cannot sign in cannot be asked to. Throttled
+| hard for the same reason: an open endpoint that sends mail is an open
+| endpoint that sends mail on somebody else's behalf.
+*/
+Route::post('auth/forgot-password', [PasswordResetController::class, 'forgot'])
+    ->middleware('throttle:password-reset-request');
+Route::post('auth/verify-reset-code', [PasswordResetController::class, 'verify'])
+    /* Guesses, so it shares the submit limiter — the real ceiling is still
+       five wrong codes counted on the reset row itself. */
+    ->middleware('throttle:password-reset-submit');
+Route::post('auth/reset-password', [PasswordResetController::class, 'reset'])
+    /* Same limiter: keyed per account, so one person mistyping cannot lock
+       out a colleague on the same office connection. The real ceiling is five
+       wrong codes, counted on the reset row itself. */
+    ->middleware('throttle:password-reset-submit');
+
 Route::get('services', [ServiceRequestController::class, 'getAvailableServices']);
 Route::get('contact', [ServiceRequestController::class, 'getContactInfo']);
 Route::get('announcements', [PublicController::class, 'announcements']);
 Route::get('announcements/{announcement}', [PublicController::class, 'announcement']);
 Route::get('hero-slides', [PublicController::class, 'heroSlides']);
 Route::get('officials', [PublicController::class, 'officials']);
+
+/*
+| An appointment asked for by somebody who is not on the register.
+|
+| Open to the internet, so throttled — but not as hard as it first was.
+|
+| A REFUSED request counts against the limit too, so at three an hour a
+| visitor who mistyped their mobile number twice and corrected it was locked
+| out for an hour by the form telling them off. Ten leaves room to get it
+| wrong; the real protection against a spam booking is elsewhere: office
+| hours, one request per number per day, and Pending rather than Scheduled.
+*/
+Route::post('appointment-requests', [PublicController::class, 'requestAppointment'])
+    ->middleware('throttle:10,60');
 Route::get('stats', [PublicController::class, 'stats']);
 Route::get('verify/{referenceNumber}', [PublicController::class, 'verifyCertificate']);
 Route::post('assistant/inquiry', [PublicController::class, 'assistantInquiry']);
@@ -82,6 +117,17 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('chat/{token}', [ChatController::class, 'thread'])->where('token', '[A-Za-z0-9]{48}');
     Route::post('chat/{token}/messages', [ChatController::class, 'sendMessage'])
         ->where('token', '[A-Za-z0-9]{48}')->middleware('throttle:60,1');
+    /*
+    | One more question on a conversation the desk had finished with.
+    |
+    | Its own route rather than a flag on `messages`, because it does more
+    | than post a line: it takes the conversation out of Closed and puts it
+    | back in the queue, which is a different act with a different audit trail.
+    */
+    Route::post('chat/{token}/follow-up', [ChatController::class, 'followUp'])
+        ->where('token', '[A-Za-z0-9]{48}')
+        ->middleware('throttle:20,1');
+
     Route::post('chat/{token}/end', [ChatController::class, 'endConversation'])
         ->where('token', '[A-Za-z0-9]{48}');
 });
@@ -93,6 +139,15 @@ Route::post('contact', [PublicController::class, 'contact'])->middleware('thrott
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth:sanctum')->group(function () {
+    /*
+    | "Has anything changed?" — asked about once a second by every open tab.
+    |
+    | Counters only, no records, so it needs no gate beyond being signed in.
+    | Throttled high because it is MEANT to be asked often; one call is a
+    | single indexed read of a table with a dozen rows.
+    */
+    Route::get('pulse', PulseController::class)->middleware('throttle:240,1');
+
 
     // Account endpoints (staff + residents)
     Route::prefix('auth')->group(function () {
@@ -100,6 +155,17 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('logout', [AuthController::class, 'logout']);
         Route::put('profile', [AuthController::class, 'updateProfile']);
         Route::post('change-password', [AuthController::class, 'changePassword']);
+
+        /*
+         * The same job, done properly: the current password AND a code to the
+         * account's own mailbox. The portal uses this one. The route above
+         * stays until the offices have addresses that can receive email —
+         * see the note in PasswordResetController.
+         */
+        Route::post('password-change/code', [PasswordResetController::class, 'requestChangeCode'])
+            ->middleware('throttle:password-reset-request');
+        Route::post('password-change', [PasswordResetController::class, 'changeOwnPassword'])
+            ->middleware('throttle:password-reset-submit');
         Route::post('refresh-token', [AuthController::class, 'refreshToken']);
     });
 
@@ -170,7 +236,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Punong Barangay executive view — the whole-barangay picture.
         Route::get('dashboard/executive', [DashboardController::class, 'getExecutiveSummary'])
-            ->middleware('office:PB,AdminRole');
+            ->middleware('office:PB');
 
         /*
         | Name lookup stays open to every office: VAWC, Health and the Lupon
@@ -186,7 +252,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | one that browses, edits or classifies the registry. Every other
         | office attaches a resident through `residents/search` above.
         */
-        Route::middleware('office:Population,AdminRole')->group(function () {
+        Route::middleware('office:Population')->group(function () {
             /*
             | Family tree. `family/{relation}` REGISTERS a new person and
             | links them in one step (the Add parent / Add child / Add spouse
@@ -258,7 +324,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | yes/no about one person instead of opening the register.
         */
         Route::get('population/verify-resident', [PopulationController::class, 'verifyResident'])
-            ->middleware('office:Main Office,Population,AdminRole');
+            ->middleware('office:Main Office,Population');
 
         /*
         | Certificates & clearances. Three presses, all the clerk's: accept,
@@ -270,7 +336,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | menu: two people working one counter list is how the same
         | certificate gets started twice.
         */
-        Route::middleware(['office:Main Office,PB,AdminRole', 'deny_role:Secretary'])->group(function () {
+        Route::middleware(['office:Main Office,PB', 'deny_role:Secretary'])->group(function () {
             // Declared before the apiResource, or "report" is swallowed as an id.
             Route::get('certificates/report', [CertificateController::class, 'report']);
             Route::get('certificates/fee-schedule', [CertificateController::class, 'feeSchedule']);
@@ -278,6 +344,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::apiResource('certificates', CertificateController::class)
                 ->only(['index', 'store', 'show', 'update']);
             Route::post('certificates/{certificate}/accept', [CertificateController::class, 'accept']);
+            /* The counter photograph, before it is printed. */
+            Route::post('certificates/{certificate}/photo', [CertificateController::class, 'uploadPhoto']);
             Route::post('certificates/{certificate}/mark-printed', [CertificateController::class, 'markPrinted']);
             Route::post('certificates/{certificate}/release', [CertificateController::class, 'release']);
             Route::post('certificates/{certificate}/reprint', [CertificateController::class, 'reprint']);
@@ -288,7 +356,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | Punong Barangay and Admin able to step in; the Clerk is excluded,
         | since their remit is the service counter.
         */
-        Route::prefix('chat')->middleware(['office:Main Office,PB,AdminRole', 'deny_role:Clerk'])->group(function () {
+        Route::prefix('chat')->middleware(['office:Main Office,PB', 'deny_role:Clerk'])->group(function () {
             // The canned answers the composer offers behind @certificate/… and
             // @officials/…, built from the guides and roster the office keeps.
             Route::get('shortcuts', [ChatController::class, 'shortcuts']);
@@ -307,7 +375,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | for a counter that issues documents from the request itself, so the
         | same piece of work was tracked in two places.
         */
-        Route::middleware(['office:Main Office,PB,AdminRole', 'deny_role:Secretary'])->group(function () {
+        Route::middleware(['office:Main Office,PB', 'deny_role:Secretary'])->group(function () {
             Route::apiResource('service-requests', ServiceRequestController::class);
             Route::get('service-requests/{serviceRequest}/status', [ServiceRequestController::class, 'getStatus']);
         });
@@ -317,20 +385,20 @@ Route::middleware('auth:sanctum')->group(function () {
         */
         Route::middleware('deny_role:Clerk')->group(function () {
             // Barangay administrative records (ordinances, resolutions, …)
-            Route::prefix('administrative-records')->middleware('office:Main Office,PB,AdminRole')->group(function () {
+            Route::prefix('administrative-records')->middleware('office:Main Office,PB')->group(function () {
                 Route::get('statistics', [AdministrativeRecordController::class, 'statistics']);
                 // Adoption is the Punong Barangay's act, not the secretary's.
                 Route::post('{administrativeRecord}/approve', [AdministrativeRecordController::class, 'approve'])
-                    ->middleware('office:PB,AdminRole');
+                    ->middleware('office:PB');
                 Route::post('{administrativeRecord}/archive', [AdministrativeRecordController::class, 'archive']);
             });
             Route::apiResource('administrative-records', AdministrativeRecordController::class)
                 ->only(['index', 'store', 'show', 'update', 'destroy'])
-                ->middleware('office:Main Office,PB,AdminRole');
+                ->middleware('office:Main Office,PB');
 
             // Appointments — booked at the front desk, so the same office
             // that runs intake (plus the PB, who is scheduled into them).
-            Route::middleware('office:Main Office,PB,AdminRole')->group(function () {
+            Route::middleware('office:Main Office,PB')->group(function () {
                 Route::apiResource('appointments', AppointmentController::class);
                 Route::post('appointments/{appointment}/confirm', [AppointmentController::class, 'confirm']);
                 Route::post('appointments/{appointment}/cancel', [AppointmentController::class, 'cancel']);
@@ -352,13 +420,13 @@ Route::middleware('auth:sanctum')->group(function () {
             | secretary who could adopt their own minutes would make the
             | status mean nothing.
             */
-            Route::middleware('office:Main Office,PB,AdminRole')->group(function () {
+            Route::middleware('office:Main Office,PB')->group(function () {
                 Route::apiResource('sessions', BarangaySessionController::class)
                     ->parameters(['sessions' => 'barangaySession'])
                     ->only(['index', 'store', 'show', 'update', 'destroy']);
 
                 Route::post('sessions/{barangaySession}/adopt', [BarangaySessionController::class, 'adopt'])
-                    ->middleware('office:PB,AdminRole');
+                    ->middleware('office:PB');
             });
 
         });
@@ -418,7 +486,7 @@ Route::middleware('auth:sanctum')->group(function () {
         | The Clerk is kept out: certificates are their work, not the KP's.
         */
         Route::prefix('lupon')
-            ->middleware(['office:Lupon,PB,Main Office,AdminRole', 'deny_role:Clerk'])
+            ->middleware(['office:Lupon,PB,Main Office', 'deny_role:Clerk'])
             ->group(function () {
                 Route::get('hearings', [LuponController::class, 'deskHearings']);
                 Route::put('hearings/{hearing}', [LuponController::class, 'updateHearing']);
@@ -486,7 +554,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('rbim/{rbimCensus}/members/{member}', [RbimCensusController::class, 'matchMember']);
         Route::delete('rbim/{rbimCensus}', [RbimCensusController::class, 'destroy']);
 
-        Route::prefix('population')->middleware('office:Population,AdminRole')->group(function () {
+        Route::prefix('population')->middleware('office:Population')->group(function () {
             Route::get('households', [PopulationController::class, 'listHouseholds']);
             Route::post('households', [PopulationController::class, 'createHousehold']);
             Route::put('households/{household}', [PopulationController::class, 'updateHousehold']);
@@ -505,6 +573,13 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('accounts/{user}/toggle', [PopulationController::class, 'toggleResidentAccount']);
             // "I never got the email" — sends a fresh activation code.
             Route::post('accounts/{user}/resend-activation', [PopulationController::class, 'resendActivation']);
+
+            /*
+            | A password set at the counter, for a resident who cannot get at
+            | their email. Residents only — enforced in the controller, not
+            | here, because a route file is not where that belongs.
+            */
+            Route::post('accounts/{user}/reset-password', [PopulationController::class, 'resetAccountPassword']);
         });
 
         /*
@@ -531,6 +606,20 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('users', [AdminUserController::class, 'index']);
             Route::post('users', [AdminUserController::class, 'store']);
             Route::put('users/{user}', [AdminUserController::class, 'update']);
+
+            /*
+            | Deleting refuses cleanly when the account has work behind it —
+            | see the controller. Deactivating is the answer in that case, and
+            | it says so.
+            */
+            Route::delete('users/{user}', [AdminUserController::class, 'destroy']);
+
+            /*
+            | The non-residents on the REGISTER, not in the users table —
+            | none of them has an account, so a list of accounts showed an
+            | empty page and was technically right.
+            */
+            Route::get('non-residents', [AdminUserController::class, 'nonResidents']);
         });
     });
 });

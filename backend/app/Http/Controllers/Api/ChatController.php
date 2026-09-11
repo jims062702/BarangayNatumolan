@@ -256,6 +256,73 @@ class ChatController extends BaseController
         return $this->success($this->messageView($message), 'Message sent', 201);
     }
 
+    /**
+     * One more question, on a conversation the desk had finished with.
+     *
+     * A new conversation was the only way to ask this, and it arrived at the
+     * desk with no history: the agent could not see what had already been
+     * answered, and the resident had to explain it twice. This reopens the
+     * thread instead, so the answer and the follow-up sit together.
+     *
+     * It goes back to Waiting rather than to the agent who closed it. That
+     * agent may be off duty, and a follow-up sitting in one person's queue
+     * until they next log in is slower than the new conversation it replaces.
+     */
+    public function followUp(Request $request, string $token)
+    {
+        $validated = $request->validate([
+            'body' => 'required|string|max:2000',
+        ]);
+
+        $conversation = $this->ownedConversation($token);
+
+        if (!$conversation) {
+            return $this->notFound('That conversation could not be found');
+        }
+
+        /*
+         * Only a closed one is reopened. An open conversation taking this
+         * route would silently reset its status and count a follow-up that
+         * never happened, so it is sent down the ordinary path instead.
+         */
+        if ($conversation->status !== 'Closed') {
+            return $this->sendMessage($request, $token);
+        }
+
+        /*
+         * `closed_at` is kept, not cleared.
+         *
+         * The agent reading this needs to know whether the thread went quiet
+         * for an hour or for a month — it changes how much of it they have to
+         * read back — and `closed_at` is overwritten the next time it closes.
+         */
+        $conversation->update([
+            'status' => 'Waiting',
+            'follow_up_count' => $conversation->follow_up_count + 1,
+            'reopened_at' => now(),
+            'last_closed_at' => $conversation->closed_at,
+            'closed_at' => null,
+        ]);
+
+        /* A line in the thread itself, so the gap is visible while reading. */
+        $conversation->addMessage(
+            'system',
+            $conversation->last_closed_at
+                ? 'The resident followed up on this conversation, closed '
+                    . $conversation->last_closed_at->diffForHumans() . '.'
+                : 'The resident followed up on this conversation.'
+        );
+
+        $message = $conversation->addMessage('visitor', $validated['body']);
+
+        $this->notifyDesk($conversation, $validated['body'], followUp: true);
+
+        return $this->success([
+            'conversation' => $this->visitorView($conversation->fresh()),
+            'message' => $this->messageView($message),
+        ], 'Follow-up sent', 201);
+    }
+
     /** Lets the visitor end the conversation from their side. */
     public function endConversation(string $token)
     {
@@ -502,16 +569,28 @@ class ChatController extends BaseController
     }
 
     /** Rings every account that staffs the live desk. */
-    private function notifyDesk(ChatConversation $conversation, string $preview): void
-    {
+    private function notifyDesk(
+        ChatConversation $conversation,
+        string $preview,
+        bool $followUp = false,
+    ): void {
         $ids = User::where('is_active', true)
             ->whereIn('role', self::AGENT_ROLES)
             ->pluck('id');
 
+        /*
+         * A follow-up says so in the title. Read as a fresh enquiry it looks
+         * like a resident who has not been helped yet, and the desk answers a
+         * question it has already answered.
+         */
+        $title = $followUp
+            ? 'Live chat follow-up: ' . $conversation->visitor_name
+            : 'Live chat: ' . $conversation->visitor_name . ' needs help';
+
         Notification::notifyUsers(
             $ids,
             'chat_waiting',
-            'Live chat: ' . $conversation->visitor_name . ' needs help',
+            $title,
             \Illuminate\Support\Str::limit($preview, 140),
             'chat',
             $conversation->id
@@ -528,6 +607,9 @@ class ChatController extends BaseController
             'unread' => $conversation->unread_for_visitor,
             'last_message_at' => $conversation->last_message_at,
             'closed_at' => $conversation->closed_at,
+            /* So the widget knows to offer "ask a follow-up" rather than a
+               disabled box, and can say it has been reopened before. */
+            'follow_up_count' => $conversation->follow_up_count,
         ] + $this->queueView($conversation);
     }
 
@@ -577,6 +659,17 @@ class ChatController extends BaseController
             'last_message_at' => $conversation->last_message_at,
             'created_at' => $conversation->created_at,
             'closed_at' => $conversation->closed_at,
+
+            /*
+             * That this is a resident coming back, and how often.
+             *
+             * Once is somebody who forgot to ask something. Four times is a
+             * matter the desk keeps closing without settling, and the count
+             * is the only place that shows.
+             */
+            'follow_up_count' => $conversation->follow_up_count,
+            'reopened_at' => $conversation->reopened_at,
+            'last_closed_at' => $conversation->last_closed_at,
         ];
     }
 

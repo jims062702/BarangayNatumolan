@@ -30,14 +30,24 @@ import type { ServiceRequest } from "../../types";
 /** One certificate type a resident can ask for, with what it takes. */
 interface CertificateService {
   certificate_type: string;
-  fee: number;
+  /*
+   * Null where the ordinance prices by purpose rather than by document.
+   * A Barangay Clearance is ₱20 for a filing fee and ₱200 for a Mayor's
+   * Permit, so there is no one number to quote — and quoting one would be
+   * telling most residents the wrong amount before they walk over.
+   */
+  fee: number | null;
+  fee_varies?: boolean;
   description?: string | null;
   requirements: string[];
   schedule?: string | null;
 }
 
-const peso = (amount: number) =>
-  amount === 0 ? "Free" : `₱${amount.toFixed(2)}`;
+const peso = (amount: number | null | undefined) => {
+  if (amount === null || amount === undefined) return "Set at the counter";
+
+  return amount === 0 ? "Free" : `₱${amount.toFixed(2)}`;
+};
 
 export default function PortalRequests() {
   const [rows, setRows] = useState<ServiceRequest[]>([]);
@@ -99,7 +109,9 @@ export default function PortalRequests() {
       !(await confirmAction({
         title: `Request a ${serviceType}?`,
         text: chosen
-          ? `Fee at the counter: ${peso(chosen.fee)}.`
+          ? chosen.fee === null
+            ? "The fee depends on what the clearance is for — the office will tell you at the counter."
+            : `Fee at the counter: ${peso(chosen.fee)}.`
           : undefined,
         confirmText: "Yes, submit",
       }))
@@ -250,6 +262,13 @@ export default function PortalRequests() {
                 <span className="text-gray-500">Fee at the counter:</span>
                 <span className="font-bold text-dark">{peso(chosen.fee)}</span>
               </div>
+
+              {chosen.fee === null && (
+                <p className="mt-1 text-xs leading-relaxed text-gray-500">
+                  This one is priced by what it is for — from ₱20 to ₱200 under the barangay
+                  ordinance. The office works it out when you say what you need it for.
+                </p>
+              )}
 
               <p className="mt-3 mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
                 Bring with you

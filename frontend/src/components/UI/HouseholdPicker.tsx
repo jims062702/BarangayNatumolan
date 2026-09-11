@@ -3,6 +3,7 @@ import { FiChevronDown, FiSearch, FiX } from "react-icons/fi";
 import { api } from "../../lib/api";
 import { inputClasses } from "./FormField";
 import type { Household } from "../../types";
+import SearchInput from "./SearchInput";
 
 /** "HH-2026-0003 · Purok 3 · Owner: Juan Dela Cruz" */
 export function householdLabel(h: Household): string {
@@ -104,12 +105,10 @@ export default function HouseholdPicker({ value, selected, onSelect, onAddNew, p
         <div className="absolute z-30 mt-1 w-full rounded-2xl border border-gray bg-white p-2 shadow-lg">
           <div className="relative mb-2">
             <FiSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              ref={inputRef}
+            <SearchInput
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={setQuery}
               placeholder="Type household no., street, purok, or owner…"
-              className={`${inputClasses} pl-9`}
             />
           </div>
 

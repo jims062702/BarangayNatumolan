@@ -4,6 +4,7 @@ import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { formatWallClock } from "../../lib/datetime";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
 import { FiCheck, FiXCircle, FiEdit3 } from "react-icons/fi";
 import RowAction, { RowActions } from "../../components/UI/RowAction";
 import Card from "../../components/UI/Card";
@@ -36,8 +37,15 @@ export default function AppointmentScheduler() {
   const [minutes, setMinutes] = useState("");
   const [savingMinutes, setSavingMinutes] = useState(false);
 
-  const load = () => {
-    setLoading(true);
+  /*
+   * `silent` is for the background timer.
+   *
+   * A refresh nobody asked for must not blank the page somebody is
+   * reading; a first load or a filter change should still say it is
+   * working. Same fetch, and only the announcement differs.
+   */
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     api
       .get("/appointments", { params: { page, date: date || undefined } })
       .then((r) => {
@@ -54,7 +62,15 @@ export default function AppointmentScheduler() {
   }, [page, date]);
 
   // Live updates: bookings and cancellations appear without a refresh.
-  useAutoRefresh(load, REFRESH.staff);
+  useAutoRefresh(() => load(true), REFRESH.staff);
+
+  /*
+   * Somebody else's change, about a second after they make it.
+   *
+   * The timer above stays as a backstop: if the pulse cannot be
+   * reached the page is a few seconds stale rather than frozen.
+   */
+  usePulse("appointments", () => load(true));
 
   /** "14:30" out of a time column that may arrive as "14:30:00". */
   const asTime = (value: string | null | undefined) => (value ? value.slice(0, 5) : "");
@@ -157,9 +173,38 @@ export default function AppointmentScheduler() {
               render: (a: Appointment) => <span className="font-medium text-dark">{a.appointment_number}</span>,
             },
             {
-              header: "Resident",
+              /*
+                "Who" rather than "Resident": half of these are now visitors
+                the register has never heard of, and a column headed Resident
+                showing a dash for them said the row was broken.
+              */
+              header: "Who",
               render: (a: Appointment) =>
-                a.resident ? `${a.resident.first_name} ${a.resident.last_name}` : "—",
+                a.resident ? (
+                  `${a.resident.first_name} ${a.resident.last_name}`
+                ) : a.guest_name ? (
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-dark">{a.guest_name}</p>
+                    {/* The number is the only way back to a visitor, so it is
+                        on the row rather than behind a click. */}
+                    <p className="text-xs text-gray-500">
+                      {a.guest_contact}
+                      <span className="ml-1.5 rounded-full bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
+                        visitor
+                      </span>
+                    </p>
+                  </div>
+                ) : (
+                  "—"
+                ),
+            },
+            {
+              header: "About",
+              render: (a: Appointment) => (
+                <span className="line-clamp-2 max-w-xs text-xs text-gray-600">
+                  {a.purpose || a.notes || "—"}
+                </span>
+              ),
             },
             { header: "Office", render: (a: Appointment) => a.office },
             {
@@ -229,9 +274,15 @@ export default function AppointmentScheduler() {
           searchable
           searchPlaceholder="Search by name or appointment #…"
           getSearchText={(a) =>
-            `${a.appointment_number} ${
-              a.resident ? `${a.resident.first_name} ${a.resident.last_name}` : ""
-            } ${a.office}`
+            [
+              a.appointment_number,
+              a.resident ? `${a.resident.first_name} ${a.resident.last_name}` : "",
+              /* A visitor is findable by the two things the office has: the
+                 name they gave and the number they gave. */
+              a.guest_name ?? "",
+              a.guest_contact ?? "",
+              a.office,
+            ].join(" ")
           }
           loading={loading}
           page={page}

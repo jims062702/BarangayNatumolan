@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
-import { inputClasses } from "./UI/FormField";
 import type { Resident } from "../types";
+import SearchInput from "../components/UI/SearchInput";
 
 interface ResidentPickerProps {
   value: Resident | null;
@@ -145,12 +145,11 @@ export default function ResidentPicker({
 
   return (
     <div className="relative">
-      <input
+      <SearchInput
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        className={inputClasses}
+        onChange={setQuery}
         placeholder="Start typing a name or resident number…"
-        aria-label="Search residents"
+        label="Search residents"
       />
       {loading && (
         <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs text-gray-400">

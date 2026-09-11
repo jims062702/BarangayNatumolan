@@ -253,20 +253,17 @@ export function menuFor(user: User): MenuSection[] {
     // System administrator, not a barangay office — keeps reach into every
     // module so bad data can be corrected. (To be retired once each office
     // is seeded with its own account.)
+    /*
+     * The system administrator makes staff accounts, and looks after the
+     * public landing page. That is the whole job.
+     *
+     * It used to reach into every module "so bad data can be corrected",
+     * which meant one account could read the VAWC docket, the health records
+     * and the resident register alike. Correcting bad data is the work of the
+     * office that owns it — and an account that can go everywhere is the one
+     * worth stealing.
+     */
     case "Admin":
-      sections.push({
-        heading: "Records",
-        items: [
-          { label: "Residents", to: "/residents", icon: FiUsers },
-          { label: "Non-residents", to: "/residents/non-residents", icon: FiUserX },
-          { label: "Service Requests", to: "/services", icon: FiClipboard },
-          { label: "Certificates", to: "/certificates", icon: FiAward },
-          ...core,
-          ...secretariat,
-          { label: "Live Chat", to: "/chat", icon: FiMessageCircle },
-          { label: "Administrative Records", to: "/records", icon: FiArchive },
-        ],
-      });
       sections.push({
         heading: "SK / Landing Content",
         items: [
@@ -278,8 +275,14 @@ export function menuFor(user: User): MenuSection[] {
       sections.push({
         heading: "System Administration",
         items: [
-          { label: "User Accounts", to: "/admin/users", icon: FiSettings },
-          { label: "Portal Accounts", to: "/population/accounts", icon: FiUserPlus },
+          { label: "Staff Accounts", to: "/admin/users", icon: FiSettings },
+          /* Its own entry rather than a tab: thirty-four residents and ten
+             colleagues are two different jobs, and a tab hides one of them
+             behind the other. */
+          { label: "Resident Accounts", to: "/admin/residents", icon: FiUserPlus },
+          /* Register entries, not accounts: not one of them has one, so a
+             list of accounts would show an empty page. */
+          { label: "Non-residents", to: "/admin/non-residents", icon: FiUserX },
         ],
       });
       break;

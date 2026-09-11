@@ -190,11 +190,29 @@ export default function ChatWidget() {
   const [typed, setTyped] = useState("");
   const [thinking, setThinking] = useState(true);
 
+  /*
+   * Armed on arrival, and armed again every time the chat is closed.
+   *
+   * This used to run once, on mount, and a separate handler switched the
+   * bubble off for good the moment somebody tapped it. So opening the chat
+   * and closing it again left the button silent for the rest of the page
+   * view, and only a reload brought it back — which is not "it stops asking
+   * once you have opened it", it is a thing that broke.
+   *
+   * The delay is the beat before it speaks. On close it doubles as the pause
+   * that stops the bubble snapping back the instant the panel disappears.
+   */
   useEffect(() => {
+    if (open) {
+      setHint(false);
+
+      return;
+    }
+
     const timer = setTimeout(() => setHint(true), 1400);
 
     return () => clearTimeout(timer);
-  }, []);
+  }, [open]);
 
   /*
    * One line at a time: three dots while it "thinks", then the sentence
@@ -253,8 +271,6 @@ export default function ChatWidget() {
     };
   }, [hint, open, line]);
 
-  const dismissHint = () => setHint(false);
-
   /* ---- live agent ---- */
   // "form" is the short intro step; "live" is the running conversation.
   const [mode, setMode] = useState<"bot" | "form" | "live" | "signin">("bot");
@@ -298,6 +314,17 @@ export default function ChatWidget() {
   const [filing, setFiling] = useState(false);
 
   const [showPast, setShowPast] = useState(false);
+  /*
+   * The follow-up box.
+   *
+   * `followUpFor` is the token being followed up rather than a boolean,
+   * because the same box serves the live view and the reader — and in the
+   * reader the thread being answered is not the one in `token`.
+   */
+  const [followUpFor, setFollowUpFor] = useState<string | null>(null);
+  const [followUpText, setFollowUpText] = useState("");
+  const [sendingFollowUp, setSendingFollowUp] = useState(false);
+
   const [reading, setReading] = useState<PastConversation | null>(null);
   const [readingMessages, setReadingMessages] = useState<LiveMessage[]>([]);
   // Used to ring only for genuinely new agent replies.
@@ -649,6 +676,80 @@ export default function ChatWidget() {
       setReadingMessages([]);
     }
   };
+
+  /**
+   * Reopen a finished conversation with one more question.
+   *
+   * On success the widget moves into the live view on THAT thread, so the
+   * answer and the follow-up are read together — which is the whole point of
+   * reopening rather than starting again.
+   */
+  const sendFollowUp = async () => {
+    const body = followUpText.trim();
+    if (!body || !followUpFor) return;
+
+    setSendingFollowUp(true);
+
+    try {
+      await api.post(`/chat/${followUpFor}/follow-up`, { body });
+
+      remember(LIVE_KEY, followUpFor);
+      setToken(followUpFor);
+      setLiveStatus("Waiting");
+      setMode("live");
+      setReading(null);
+      setShowPast(false);
+      setFollowUpFor(null);
+      setFollowUpText("");
+      lastSeenId.current = 0;
+      await refreshLive(followUpFor);
+    } catch {
+      setLiveError("That follow-up did not send. Check your connection and try again.");
+    } finally {
+      setSendingFollowUp(false);
+    }
+  };
+
+  /** The box, shared by the live view and the reader. */
+  const followUpBox = (sessionToken: string) =>
+    followUpFor === sessionToken ? (
+      <div className="space-y-2">
+        <textarea
+          rows={3}
+          autoFocus
+          value={followUpText}
+          onChange={(e) => setFollowUpText(e.target.value)}
+          placeholder="What else would you like to ask?"
+          maxLength={2000}
+          className="w-full rounded-xl border border-gray px-3 py-2 text-xs text-dark outline-none focus:border-primary focus:ring-2 focus:ring-primary/25"
+        />
+        <div className="flex justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => { setFollowUpFor(null); setFollowUpText(""); }}
+            className="cursor-pointer rounded-full border border-gray px-3 py-1.5 text-xs font-semibold text-dark"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={sendFollowUp}
+            disabled={!followUpText.trim() || sendingFollowUp}
+            className="cursor-pointer rounded-full bg-primary px-4 py-1.5 text-xs font-semibold text-white hover:bg-primary-dark disabled:opacity-60"
+          >
+            {sendingFollowUp ? "Sending…" : "Send follow-up"}
+          </button>
+        </div>
+      </div>
+    ) : (
+      <button
+        type="button"
+        onClick={() => { setFollowUpFor(sessionToken); setFollowUpText(""); }}
+        className="cursor-pointer rounded-full bg-primary px-4 py-1.5 text-xs font-semibold text-white hover:bg-primary-dark"
+      >
+        Ask a follow-up
+      </button>
+    );
 
   const endLive = async () => {
     if (token) {
@@ -1046,6 +1147,21 @@ export default function ChatWidget() {
                   </div>
                 ))}
               </div>
+
+              {/*
+                The same offer, on an older thread. A resident reading back
+                through what they were told is exactly the person who realises
+                they have one more question.
+              */}
+              {reading.status === "Closed" && (
+                <div className="mt-4 space-y-2 rounded-2xl bg-white px-4 py-3 text-center shadow-sm">
+                  <p className="text-xs text-gray-500">
+                    Still need something on this? Ask here and the desk picks up
+                    the same conversation.
+                  </p>
+                  {followUpBox(reading.session_token)}
+                </div>
+              )}
             </div>
           ) : (            <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto bg-secondary/60 px-4 py-4">
               {mode === "live" ? (
@@ -1083,16 +1199,20 @@ export default function ChatWidget() {
                   {liveStatus === "Closed" && (
                     <div className="space-y-2 rounded-2xl bg-white px-4 py-3 text-center shadow-sm">
                       <p className="text-xs text-gray-500">
-                        This conversation has ended. It is kept — you can read it again
-                        whenever you need to.
+                        This conversation has ended. If something is still unclear you
+                        can ask here — it goes back to the same desk with everything
+                        already said.
                       </p>
-                      <button
-                        type="button"
-                        onClick={endLive}
-                        className="cursor-pointer rounded-full bg-primary px-4 py-1.5 text-xs font-semibold text-white hover:bg-primary-dark"
-                      >
-                        Back to the assistant
-                      </button>
+                      {token && followUpBox(token)}
+                      {followUpFor !== token && (
+                        <button
+                          type="button"
+                          onClick={endLive}
+                          className="block w-full cursor-pointer text-xs font-medium text-gray-500 hover:text-primary"
+                        >
+                          Back to the assistant
+                        </button>
+                      )}
                     </div>
                   )}
                 </>
@@ -1246,7 +1366,8 @@ export default function ChatWidget() {
           <button
             type="button"
             onClick={() => {
-              dismissHint();
+              /* No dismissal here any more: opening hides the bubble through
+                 `!open`, and closing arms it again. */
               setOpen(true);
               void ensureNotifyPermission();
             }}
@@ -1296,7 +1417,8 @@ export default function ChatWidget() {
         type="button"
         aria-label={open ? "Close the barangay assistant" : "Chat with the barangay assistant"}
         onClick={() => {
-          dismissHint();
+          /* The bubble follows `open` on its own now — hidden while the panel
+             is up, back a beat after it closes. */
           setOpen((o) => !o);
           // Opening the chat is a good moment to ask for desktop-alert
           // permission (a user gesture) — enables reply popups when tabbed away.

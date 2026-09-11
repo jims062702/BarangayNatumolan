@@ -55,7 +55,7 @@ export default function About() {
   }, []);
 
   return (
-    <section id="about" className="bg-white py-20 lg:py-28">
+    <section id="about" className="pattern pattern-grid-spotlight bg-white py-20 lg:py-28">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <SectionTitle
           eyebrow="Who We Are"

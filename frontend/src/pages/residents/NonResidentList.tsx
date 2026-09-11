@@ -6,8 +6,8 @@ import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import PageHeader from "../../components/UI/PageHeader";
-import { inputClasses } from "../../components/UI/FormField";
 import type { Resident } from "../../types";
+import SearchInput from "../../components/UI/SearchInput";
 
 /**
  * The people on the register who do not live here.
@@ -86,15 +86,15 @@ export default function NonResidentList() {
         </p>
 
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          <input
+          <SearchInput
             value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
+            onChange={(value) => {
+              setSearch(value);
               setPage(1);
             }}
-            className={`${inputClasses} max-w-xs flex-1`}
             placeholder="Search name or record number…"
-            aria-label="Search non-residents"
+            label="Search non-residents"
+            className="max-w-sm flex-1"
           />
           {search && (
             <button

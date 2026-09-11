@@ -300,3 +300,164 @@ export function DashboardSkeleton() {
     </div>
   );
 }
+
+/**
+ * What a PUBLIC page downloads behind.
+ *
+ * Deliberately shapeless. The sign-in page, the landing page and the
+ * certificate check share nothing but a background, and the app shell — a
+ * sidebar, a row of stat tiles, two charts — was being shown in front of all
+ * three. A skeleton that promises a dashboard to somebody opening the login
+ * page is not a loading state; it is a wrong answer that then jumps.
+ */
+export function PublicPageSkeleton() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-secondary">
+      <Busy what="the page" />
+      <div className="flex flex-col items-center gap-4">
+        <span className="h-14 w-14 animate-pulse rounded-full bg-primary/15" />
+        <span className="h-3 w-40 animate-pulse rounded-full bg-gray" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The sign-in page's own shape: the picture panel and the form beside it.
+ *
+ * This one IS worth drawing, because the layout is fixed and known — two
+ * panels on a wide screen, the form alone on a phone — so the page that
+ * arrives lands exactly where the skeleton said it would.
+ */
+export function LoginSkeleton() {
+  return (
+    <div className="flex min-h-screen bg-white">
+      <Busy what="the sign-in page" />
+
+      {/* The panel is a solid brand block, as it is on the real page. */}
+      <div className="hidden w-1/2 bg-primary-dark lg:block">
+        <div className="flex h-full flex-col justify-between p-12">
+          <span className="h-4 w-32 animate-pulse rounded bg-white/20" />
+          <div className="space-y-4">
+            <span className="block h-20 w-20 animate-pulse rounded-full bg-white/20" />
+            <span className="block h-10 w-80 animate-pulse rounded bg-white/20" />
+            <span className="block h-5 w-56 animate-pulse rounded bg-white/15" />
+            <span className="block h-16 w-72 animate-pulse rounded bg-white/10" />
+          </div>
+          <span className="h-3 w-48 animate-pulse rounded bg-white/15" />
+        </div>
+      </div>
+
+      <div className="flex w-full items-center justify-center bg-secondary px-4 py-10 lg:w-1/2 lg:bg-white">
+        <div className="w-full max-w-md space-y-6">
+          {/* On a phone the branding sits above the form instead. */}
+          <div className="space-y-3 text-center lg:hidden">
+            <Skeleton className="mx-auto h-16 w-16 rounded-full" />
+            <Skeleton className="mx-auto h-6 w-52" />
+          </div>
+
+          <div className="hidden space-y-3 lg:block">
+            <Skeleton className="h-9 w-56" />
+            <Skeleton className="h-4 w-72" />
+          </div>
+
+          <div className="space-y-4">
+            <Skeleton className="h-4 w-16" />
+            <Skeleton className="h-12 w-full rounded-xl" />
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-12 w-full rounded-xl" />
+          </div>
+
+          <Skeleton className="h-12 w-full rounded-full" />
+          <Skeleton className="h-28 w-full rounded-2xl" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * An inner page, once the shell around it is already real.
+ *
+ * Modest on purpose. At this point the router knows a page is coming but not
+ * what shape it is — a table, a form, a dashboard — so this draws only the
+ * heading and one body block, which every one of them has. Anything more
+ * specific would be a guess, and a guess that turns out wrong reads worse
+ * than a plain wait. The pages that DO know their own shape carry their own
+ * skeleton instead.
+ */
+export function PageBodySkeleton() {
+  return (
+    <div>
+      <Busy what="the page" />
+      <Skeleton className="mb-2 h-7 w-64" />
+      <Skeleton className="mb-6 h-4 w-96" />
+      <div className="rounded-2xl border border-gray bg-white p-6">
+        <ListSkeleton rows={5} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A dashboard body, in the geometry of the dashboard it belongs to.
+ *
+ * Parameterised rather than fixed, because the six dashboards are not the
+ * same shape: the VAWC desk has four tiles over two cards, the SK has three
+ * over one, the Main Office five over several rows. One skeleton for all of
+ * them drew four tiles and two charts in front of every page, and whichever
+ * one you opened, the real layout then jumped.
+ *
+ * It promises the GRID and nothing finer — how many tiles, how many cards,
+ * how they are columned. That much is fixed per page and safe to draw; what
+ * goes inside a card is not.
+ */
+export function DashboardBodySkeleton({
+  tiles = 4,
+  tileColumns = 4,
+  cards = 2,
+  cardColumns = 2,
+  cardHeight = 280,
+}: {
+  tiles?: number;
+  /** The xl: column count of the tile row, matching the page. */
+  tileColumns?: 3 | 4 | 5;
+  cards?: number;
+  cardColumns?: 1 | 2 | 3;
+  cardHeight?: number;
+}) {
+  /* Written out rather than interpolated: Tailwind scans source text, and a
+     class it never sees written is a class it never builds. */
+  const tileGrid = {
+    3: "grid gap-4 sm:grid-cols-2 xl:grid-cols-3",
+    4: "grid gap-4 sm:grid-cols-2 xl:grid-cols-4",
+    5: "grid gap-4 sm:grid-cols-2 xl:grid-cols-5",
+  }[tileColumns];
+
+  const cardGrid = {
+    1: "mt-6 grid gap-6",
+    2: "mt-6 grid gap-6 lg:grid-cols-2",
+    3: "mt-6 grid gap-6 lg:grid-cols-3",
+  }[cardColumns];
+
+  return (
+    <div>
+      <Busy what="the dashboard" />
+
+      <div className={tileGrid}>
+        {Array.from({ length: tiles }).map((_, i) => (
+          <TileSkeleton key={i} />
+        ))}
+      </div>
+
+      <div className={cardGrid}>
+        {Array.from({ length: cards }).map((_, i) => (
+          <div key={i} className="rounded-2xl border border-gray bg-white p-5">
+            <Skeleton className="mb-4 h-5 w-48" />
+            <Skeleton className="w-full rounded-xl" style={{ height: cardHeight }} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

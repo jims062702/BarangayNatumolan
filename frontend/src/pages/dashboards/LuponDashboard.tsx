@@ -4,6 +4,8 @@ import { FiAlertCircle, FiBookOpen, FiCalendar, FiClock } from "react-icons/fi";
 import { api } from "../../lib/api";
 import { formatWallClock } from "../../lib/datetime";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
+import { DashboardBodySkeleton } from "../../components/UI/Skeleton";
 import Card from "../../components/UI/Card";
 import StatTile from "../../components/UI/StatTile";
 import PageHeader from "../../components/UI/PageHeader";
@@ -28,9 +30,19 @@ export default function LuponDashboard() {
   const [tick, setTick] = useState(0);
   useAutoRefresh(() => setTick((t) => t + 1), REFRESH.dashboard);
 
+  /* And within a second when somebody else touches one. */
+  usePulse("lupon_cases", () => setTick((t) => t + 1));
+
+  /* Flipped when the first fetch SETTLES — success or failure alike. Keyed
+     off "is the data still null", a request that fails would leave the
+     skeleton pulsing for ever with nothing to read. */
+  const [ready, setReady] = useState(false);
+
   useEffect(() => {
-    api.get("/lupon/deadlines").then((r) => setDeadlines(r.data.data)).catch(() => undefined);
-    api.get("/dashboard/summary").then((r) => setPendingCases(r.data.data.quick_stats?.pending_cases ?? 0)).catch(() => undefined);
+    void Promise.allSettled([
+      api.get("/lupon/deadlines").then((r) => setDeadlines(r.data.data)),
+      api.get("/dashboard/summary").then((r) => setPendingCases(r.data.data.quick_stats?.pending_cases ?? 0)),
+    ]).then(() => setReady(true));
   }, [tick]);
 
   return (
@@ -48,6 +60,10 @@ export default function LuponDashboard() {
         }
       />
 
+      {!ready ? (
+        <DashboardBodySkeleton tiles={4} tileColumns={4} cards={2} cardColumns={2} />
+      ) : (
+        <>
       <RevealGroup className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Active Docket" value={pendingCases} icon={FiBookOpen} />
         <StatTile label="Upcoming Hearings" value={deadlines?.upcoming_hearings.length ?? 0} icon={FiCalendar} tone="warning" />
@@ -120,6 +136,8 @@ export default function LuponDashboard() {
           </p>
         </Card>
       </div>
+        </>
+      )}
     </div>
   );
 }

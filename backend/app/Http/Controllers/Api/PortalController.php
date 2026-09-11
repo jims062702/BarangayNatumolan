@@ -8,6 +8,7 @@ use App\Models\Announcement;
 use App\Models\Appointment;
 use App\Models\ChatConversation;
 use App\Models\CertificateClearance;
+use App\Support\CertificateCatalogue;
 use App\Models\Blotter;
 use App\Models\LuponCase;
 use App\Models\Resident;
@@ -247,7 +248,7 @@ class PortalController extends BaseController
 
         $services = [];
 
-        foreach (CertificateController::FEES as $type => $fee) {
+        foreach (CertificateCatalogue::TYPES as $type => $spec) {
             /*
              * The two lists are maintained separately and do not always
              * agree word for word: the fee schedule says "First-Time
@@ -262,7 +263,15 @@ class PortalController extends BaseController
 
             $services[] = [
                 'certificate_type' => $type,
-                'fee' => (float) $fee,
+                /*
+                 * Null where the ordinance prices by purpose rather than by
+                 * document — a clearance is ₱20 to ₱200 depending what it is
+                 * for, and printing one of those numbers as THE fee would
+                 * quote most residents the wrong amount. The portal says the
+                 * fee is set at the counter instead.
+                 */
+                'fee' => $spec['fee'] !== null ? (float) $spec['fee'] : null,
+                'fee_varies' => $spec['fee'] === null,
                 'description' => $guide?->description,
                 // Split into lines so the form can list them rather than
                 // printing one long comma-separated string.
@@ -576,7 +585,13 @@ class PortalController extends BaseController
             'service_request_id' => $serviceRequest->id,
             'certificate_type' => $type,
             'purpose' => $serviceRequest->purpose ?: $type,
-            'fee_amount' => CertificateController::FEES[$type] ?? 0,
+            /*
+             * Provisional. A resident asking online writes the purpose in
+             * their own words, which will not match the ordinance's list, so
+             * this lands on the catch-all until the clerk picks the real
+             * purpose at the counter — which reprices it.
+             */
+            'fee_amount' => CertificateCatalogue::feeFor($type, $serviceRequest->purpose) ?? 0,
             'is_exempt' => false,
             'status' => 'Pending',
         ]);

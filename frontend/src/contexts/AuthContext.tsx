@@ -20,6 +20,14 @@ interface AuthContextType {
   /** Second half of a first sign-in: the emailed code. */
   activate: (email: string, password: string, code: string) => Promise<User>;
   logout: () => Promise<void>;
+  /**
+   * Re-read the signed-in account.
+   *
+   * For when somebody edits their own name or email: without it the sidebar
+   * and the topbar keep showing what they were called a moment ago, and the
+   * only way to correct that is to sign out.
+   */
+  refresh: () => Promise<void>;
   isAuthenticated: boolean;
 }
 
@@ -57,6 +65,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("authToken", payload.token);
     setUser(payload.user);
     return payload.user;
+  };
+
+  const refresh = async () => {
+    try {
+      const response = await api.get("/auth/me");
+      setUser(response.data.data);
+    } catch {
+      /* A failed refresh must not sign anybody out — the interceptor already
+         handles a token the server has actually refused. */
+    }
   };
 
   const login = async (email: string, password: string): Promise<LoginResult> => {
@@ -101,7 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, loading, login, activate, logout, isAuthenticated: !!user }}
+      value={{ user, loading, login, activate, logout, refresh, isAuthenticated: !!user }}
     >
       {children}
     </AuthContext.Provider>

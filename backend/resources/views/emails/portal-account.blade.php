@@ -19,9 +19,9 @@
   </table>
 
   <p style="margin:0 0 16px;">
-    Your password is your <strong>last name followed by your birthday</strong>
-    in MMDDYY form &mdash; for example, someone named Cruz born on 27 June 2002
-    would start with <code>Cruz062702</code>.
+    Your password is your <strong>last name followed by the month and year you
+    were born</strong> &mdash; for example, someone named Gasang born in June
+    2002 would start with <code>Gasang062002</code>.
   </p>
 
   <p style="margin:0 0 16px;">

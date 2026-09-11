@@ -3,6 +3,7 @@ import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
 import { FiEye, FiPlus } from "react-icons/fi";
 import RowAction, { RowActions } from "../../components/UI/RowAction";
 import Card from "../../components/UI/Card";
@@ -13,35 +14,86 @@ import { personName } from "../../lib/names";
 import PageHeader from "../../components/UI/PageHeader";
 import FormField, { inputClasses } from "../../components/UI/FormField";
 import ResidentPicker from "../../components/ResidentPicker";
+import FileField from "../../components/UI/FileField";
+import { useUpload } from "../../hooks/useUpload";
 import type { Certificate, Resident, ServiceRequest } from "../../types";
+import {
+  buildCertificateHtml,
+  type CouncilMember,
+  type PrintableCertificate,
+} from "../../lib/certificateTemplates";
 
-const TYPES = [
-  "Barangay Clearance",
-  "Certificate of Residency",
-  "Certificate of Indigency",
-  "First-Time Jobseeker",
-  "Certificate of Low or No Income",
-  "Business Barangay Clearance",
-  "Good Moral Character",
-  "Other",
-];
+/*
+ * What the barangay issues and what it costs now comes from the server,
+ * where the ordinance of 18 January 2020 is typed out once. It used to be
+ * two lists in this file — eight types with one price each — which was the
+ * wrong shape as much as the wrong numbers: a clearance is priced by what it
+ * is FOR, ₱20 to ₱200, and a business clearance by the kind of business.
+ */
+interface CatalogueType {
+  name: string;
+  fee: number | null;
+  fee_from: string | null;
+  fee_field: string | null;
+  office: string;
+  letterhead: string;
+  needs_photo: boolean;
+  fields: string[];
+}
 
-// Standard fee per certificate type (mirrors the backend fee schedule).
-const FEES: Record<string, number> = {
-  "Barangay Clearance": 50,
-  "Certificate of Residency": 30,
-  "Certificate of Indigency": 0,
-  "First-Time Jobseeker": 0,
-  "Certificate of Low or No Income": 0,
-  "Business Barangay Clearance": 200,
-  "Good Moral Character": 50,
-  Other: 0,
+interface Catalogue {
+  types: CatalogueType[];
+  clearance_purposes: Record<string, number>;
+  business_kinds: Record<string, number>;
+  other_certification_fee: number;
+}
+
+/** The plain-language label for each extra question a form asks. */
+const FIELD_LABELS: Record<string, string> = {
+  or_number: "OR number",
+  officer_of_the_day: "Kagawad — officer of the day",
+  business_name: "Business name",
+  business_kind: "Kind of business",
+  years_of_residence: "Years at this address",
+  father_name: "Father's name",
+  mother_name: "Mother's name",
+  deceased_name: "Name of the deceased",
+  deceased_age: "Age at death",
+  deceased_address: "Address of the deceased",
+  date_of_death: "Date of death",
+  time_of_death: "Time of death",
+  place_of_death: "Place of death",
+  requested_by: "Requested by",
+  relationship_to_deceased: "Their relationship to the deceased",
+  position: "Position",
+  station: "Station",
+  dates_appeared: "Date/s appeared",
+  partner_name: "Common law partner's name",
+  years_together: "Years together",
+  name_on_payroll: "Name as it appears on the payroll",
+  correct_name: "The correct spelling",
+  civil_status_stated: "Civil status to state",
+  late_spouse_name: "Name of the late spouse",
+  attached_documents: "Documents attached",
+  applicant_name: "Applicant or company",
+  work_applied_for: "Work applied for",
+  body: "What this certifies",
 };
 
-// Map a requested service to a certificate type.
-function toCertType(serviceType: string): string {
+/** A hint only where the answer's shape is not obvious from the label. */
+const FIELD_HINTS: Record<string, string> = {
+  time_of_death: "Written as it should print — e.g. 3:00 o'clock in the afternoon",
+  relationship_to_deceased: "e.g. his son, her daughter — this prints as written",
+  work_applied_for: "e.g. ELECTRICAL INSTALLATION, FENCE, HOUSE EXTENSION",
+  attached_documents: "e.g. Church and Barangay Certifications of Death",
+  years_of_residence: "Filled from the register when the census recorded it",
+};
+
+// Map a requested service to a certificate type the catalogue knows.
+function toCertType(serviceType: string, known: string[]): string {
   if (serviceType === "First-Time Jobseeker Certification") return "First-Time Jobseeker";
-  return TYPES.includes(serviceType) ? serviceType : "Other";
+
+  return known.includes(serviceType) ? serviceType : "Other Certification";
 }
 
 /**
@@ -67,28 +119,32 @@ const STAGE_HELP: Record<string, string> = {
   Released: "Handed to the resident, who has been notified. The request is complete.",
 };
 
-function openPrintView(certificate: Certificate) {
-  const win = window.open("", "_blank", "width=800,height=900");
+/**
+ * Opens the barangay's own form, filled in, and prints it.
+ *
+ * What was here printed one paragraph under every heading — "is issued this
+ * {type} for the purpose of: {purpose}" — over a signature block reading
+ * HON. RICARDO M. BALAGTAS, who is a name from the demonstration data. The
+ * office was never going to use it, so they kept making the real documents
+ * in Word.
+ */
+function openPrintView(
+  certificate: Certificate,
+  council: CouncilMember[],
+  catalogue: Catalogue | null,
+) {
+  const spec = catalogue?.types.find((t) => t.name === certificate.certificate_type);
+
+  const win = window.open("", "_blank", "width=900,height=1000");
+
   if (!win) return;
-  win.document.write(`<!doctype html><html><head><title>${certificate.certificate_number}</title>
-    <style>body{font-family:Georgia,serif;max-width:640px;margin:40px auto;color:#1F2937}
-    .head{text-align:center;border-bottom:3px double #723EC3;padding-bottom:12px}
-    h1{font-size:22px;margin:16px 0 4px;color:#723EC3}h2{font-size:18px;margin-top:36px;text-align:center;text-decoration:underline}
-    p{line-height:1.8;font-size:14px}.ref{margin-top:48px;font-size:12px;color:#555}
-    .sig{margin-top:64px;text-align:right}.sig b{display:block;border-top:1px solid #333;padding-top:4px;width:260px;margin-left:auto}</style>
-    </head><body>
-    <div class="head"><p>Republic of the Philippines<br/>Province of Misamis Oriental · Municipality of Tagoloan</p>
-    <h1>BARANGAY NATUMOLAN</h1><p>Office of the Punong Barangay</p></div>
-    <h2>${certificate.certificate_type.toUpperCase()}</h2>
-    <p>TO WHOM IT MAY CONCERN:</p>
-    <p>This is to certify that <b>${certificate.resident?.first_name ?? ""} ${certificate.resident?.last_name ?? ""}</b>,
-    of legal age and a resident of Barangay Natumolan, Tagoloan, Misamis Oriental, is issued this
-    ${certificate.certificate_type} for the purpose of: <b>${certificate.purpose ?? "—"}</b>.</p>
-    <p>Issued this ${new Date().toLocaleDateString("en-PH", { dateStyle: "long" })} at Barangay Natumolan.</p>
-    <div class="sig"><b>HON. RICARDO M. BALAGTAS<br/>Punong Barangay</b></div>
-    <p class="ref">Certificate No: ${certificate.certificate_number} · Verification Ref: ${certificate.reference_number}<br/>
-    Verify authenticity at the barangay website → Certificate Verification.</p>
-    <script>window.print()</script></body></html>`);
+
+  win.document.write(
+    buildCertificateHtml(certificate as unknown as PrintableCertificate, council, {
+      letterhead: spec?.letterhead ?? "plain",
+      office: spec?.office ?? "Punong Barangay",
+    }),
+  );
   win.document.close();
 }
 
@@ -117,15 +173,27 @@ export default function CertificateList() {
   const [certResident, setCertResident] = useState<Resident | null>(null);
   const [residentRequests, setResidentRequests] = useState<ServiceRequest[]>([]);
   const [selectedRequestId, setSelectedRequestId] = useState(""); // "" = walk-in
-  const [certType, setCertType] = useState(TYPES[0]);
+  const [catalogue, setCatalogue] = useState<Catalogue | null>(null);
+  /* The council that signs the paper, read from the Officials roster. */
+  const [council, setCouncil] = useState<CouncilMember[]>([]);
+  const [certType, setCertType] = useState("Barangay Clearance");
+  /* The answers this particular form asks for beyond the register. */
+  const [fields, setFields] = useState<Record<string, string>>({});
   const [purpose, setPurpose] = useState("");
   const [fee, setFee] = useState("50");
   const [exempt, setExempt] = useState(false);
   const [exemptReason, setExemptReason] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const load = () => {
-    setLoading(true);
+  /*
+   * `silent` is for the background timer.
+   *
+   * A refresh nobody asked for must not blank the page somebody is
+   * reading; a first load or a filter change should still say it is
+   * working. Same fetch, and only the announcement differs.
+   */
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     api
       .get("/certificates", { params: { page, status: statusFilter || undefined } })
       .then((r) => {
@@ -143,15 +211,58 @@ export default function CertificateList() {
   }, [page, statusFilter]);
 
   // Live updates: new online requests appear without a manual refresh.
-  useAutoRefresh(load, REFRESH.staff);
+  useAutoRefresh(() => load(true), REFRESH.staff);
+
+  /*
+   * Somebody else's change, about a second after they make it.
+   *
+   * The timer above stays as a backstop: if the pulse cannot be
+   * reached the page is a few seconds stale rather than frozen.
+   */
+  usePulse("certificates", () => load(true));
+
+  /*
+   * Both fetched once, not per print. A clerk printing a stack of twenty
+   * should not ask the server twenty times for a fee schedule that changes
+   * when an ordinance does.
+   */
+  useEffect(() => {
+    api.get("/certificates/fee-schedule").then((r) => setCatalogue(r.data.data));
+    /*
+     * The public roster, which returns { barangay, sk } already grouped —
+     * and which every signed-in office may read. The SK chairperson is
+     * folded in because the clearance sidebar lists them with the council.
+     */
+    api
+      .get("/officials")
+      .then((r) =>
+        setCouncil([...(r.data.data?.barangay ?? []), ...(r.data.data?.sk ?? [])]),
+      )
+      .catch(() => setCouncil([]));
+  }, []);
+
+  /** What this type charges, given the answer that decides it. */
+  const feeFor = (type: string, purposeText: string, answers: Record<string, string>) => {
+    const spec = catalogue?.types.find((t) => t.name === type);
+
+    if (!spec) return 0;
+    if (spec.fee !== null) return spec.fee;
+
+    const choice = spec.fee_field === "purpose" ? purposeText : answers[spec.fee_field ?? ""];
+    const table =
+      spec.fee_from === "clearance" ? catalogue?.clearance_purposes : catalogue?.business_kinds;
+
+    return table?.[choice ?? ""] ?? catalogue?.other_certification_fee ?? 0;
+  };
 
   const resetCreateForm = () => {
     setCertResident(null);
     setResidentRequests([]);
     setSelectedRequestId("");
-    setCertType(TYPES[0]);
+    setCertType("Barangay Clearance");
     setPurpose("");
-    setFee(String(FEES[TYPES[0]] ?? 0));
+    setFields({});
+    setFee("");
     setExempt(false);
     setExemptReason("");
   };
@@ -193,10 +304,15 @@ export default function CertificateList() {
     setSelectedRequestId(requestId);
     const request = residentRequests.find((r) => String(r.id) === requestId);
     if (request) {
-      const type = toCertType(request.service_type);
+      const type = toCertType(
+        request.service_type,
+        (catalogue?.types ?? []).map((t) => t.name),
+      );
+
       setCertType(type);
-      setFee(String(FEES[type] ?? 0));
+      setFields({});
       if (request.purpose) setPurpose(request.purpose);
+      setFee(String(feeFor(type, request.purpose ?? "", {})));
     }
   };
 
@@ -232,8 +348,30 @@ export default function CertificateList() {
 
   const changeType = (type: string) => {
     setCertType(type);
-    if (!exempt) setFee(String(FEES[type] ?? 0));
+    /* Answers belong to the form that asked them; keeping them across a
+       type change carried a date of death onto a residency certificate. */
+    setFields({});
+    if (!exempt) setFee(String(feeFor(type, purpose, {})));
   };
+
+  /*
+   * The purpose moves the price, not only the type. A clearance for a
+   * Mayor's Permit is ₱200 and one for local employment is ₱30, so the
+   * amount has to follow the dropdown as it changes.
+   */
+  const changePurpose = (value: string) => {
+    setPurpose(value);
+    if (!exempt) setFee(String(feeFor(certType, value, fields)));
+  };
+
+  const changeField = (key: string, value: string) => {
+    const next = { ...fields, [key]: value };
+
+    setFields(next);
+    if (!exempt) setFee(String(feeFor(certType, purpose, next)));
+  };
+
+  const spec = catalogue?.types.find((t) => t.name === certType);
 
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -246,7 +384,7 @@ export default function CertificateList() {
         service_request_id: selectedRequestId ? Number(selectedRequestId) : undefined,
         certificate_type: certType,
         purpose,
-
+        template_fields: fields,
         fee_amount: exempt ? 0 : Number(fee),
         is_exempt: exempt,
         exemption_reason: exempt ? exemptReason : undefined,
@@ -303,8 +441,44 @@ export default function CertificateList() {
    * press Print again — the record has moved on either way, because the
    * document now exists.
    */
+  /*
+   * The counter photograph, for the clearance that carries one.
+   *
+   * Only the picture: the two thumbmark boxes print empty because a
+   * thumbmark is inked onto the paper in front of the clerk. Offering to
+   * upload one would be offering to witness something from a distance.
+   */
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const photoUpload = useUpload();
+
+  const attachPhoto = async (certificate: Certificate, file: File) => {
+    setPhotoFile(file);
+
+    try {
+      const form = new FormData();
+
+      form.append("photo", file);
+
+      const response = await api.post(
+        `/certificates/${certificate.id}/photo`,
+        form,
+        /* So the bar reports the transfer rather than guessing at it. */
+        { ...photoUpload.tracker },
+      );
+
+      photoUpload.finish();
+      setDetail(response.data.data);
+      toast(response.data.message);
+      load(true);
+    } catch (err) {
+      photoUpload.fail();
+      setPhotoFile(null);
+      toast(errorMessage(err), "error");
+    }
+  };
+
   const printAndFinish = async (certificate: Certificate) => {
-    openPrintView(certificate);
+    openPrintView(certificate, council, catalogue);
     try {
       const response = await api.post(`/certificates/${certificate.id}/mark-printed`);
       toast(response.data.message);
@@ -351,7 +525,7 @@ export default function CertificateList() {
         )}
         {c.status === "Ready to Claim" && (
           <>
-            <button type="button" onClick={() => openPrintView(c)} className={quiet}>
+            <button type="button" onClick={() => openPrintView(c, council, catalogue)} className={quiet}>
               Print again
             </button>
             <button type="button" onClick={() => act(c, "release")} className={success}>
@@ -361,7 +535,7 @@ export default function CertificateList() {
         )}
         {c.status === "Released" && (
           <>
-            <button type="button" onClick={() => openPrintView(c)} className={outline}>
+            <button type="button" onClick={() => openPrintView(c, council, catalogue)} className={outline}>
               Print
             </button>
             <button
@@ -636,12 +810,19 @@ export default function CertificateList() {
           <div className="grid gap-4 sm:grid-cols-2">
             <FormField label="Certificate type" required hint="Auto-filled from the request; change if needed">
               <select value={certType} onChange={(e) => changeType(e.target.value)} className={inputClasses}>
-                {TYPES.map((type) => (
-                  <option key={type}>{type}</option>
+                {(catalogue?.types ?? []).map((type) => (
+                  <option key={type.name}>{type.name}</option>
                 ))}
               </select>
             </FormField>
-            <FormField label="Fee (₱)" hint="Auto-set from the type">
+            <FormField
+              label="Fee (₱)"
+              hint={
+                spec?.fee === null
+                  ? "Set by the ordinance from the answer below, not by the type"
+                  : "Set by the ordinance of 18 January 2020"
+              }
+            >
               <input
                 type="number"
                 min="0"
@@ -654,9 +835,101 @@ export default function CertificateList() {
             </FormField>
           </div>
 
+          {/*
+            A list where the ordinance prices by purpose, a free line where it
+            does not. Typed freely, "Mayors permit" is not "Mayor's Permit" and
+            the resident was charged ₱30 for a ₱200 document.
+          */}
           <FormField label="Purpose" required>
-            <input value={purpose} onChange={(e) => setPurpose(e.target.value)} required className={inputClasses} placeholder="e.g. Employment requirement" />
+            {spec?.fee_from === "clearance" ? (
+              <select
+                value={purpose}
+                onChange={(e) => changePurpose(e.target.value)}
+                required
+                className={inputClasses}
+              >
+                <option value="">Choose what the clearance is for…</option>
+                {Object.entries(catalogue?.clearance_purposes ?? {}).map(([name, amount]) => (
+                  <option key={name} value={name}>
+                    {name} — ₱{amount}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={purpose}
+                onChange={(e) => changePurpose(e.target.value)}
+                required
+                className={inputClasses}
+                placeholder="e.g. Employment requirement"
+              />
+            )}
           </FormField>
+
+          {/*
+            What this particular form asks for and the register cannot answer
+            — the hour of a death, a partner's name, the work applied for.
+            Nothing shows for a certificate that asks nothing.
+          */}
+          {(spec?.fields ?? []).length > 0 && (
+            <div className="rounded-2xl border border-gray bg-secondary/40 p-4">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                What this form asks for
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {(spec?.fields ?? []).map((key) => (
+                  <FormField
+                    key={key}
+                    label={FIELD_LABELS[key] ?? key}
+                    hint={FIELD_HINTS[key]}
+                  >
+                    {key === "business_kind" ? (
+                      <select
+                        value={fields[key] ?? ""}
+                        onChange={(e) => changeField(key, e.target.value)}
+                        className={inputClasses}
+                      >
+                        <option value="">Choose the kind of business…</option>
+                        {Object.entries(catalogue?.business_kinds ?? {}).map(([name, amount]) => (
+                          <option key={name} value={name}>
+                            {name} — ₱{amount}
+                          </option>
+                        ))}
+                      </select>
+                    ) : key === "date_of_death" ? (
+                      <input
+                        type="date"
+                        value={fields[key] ?? ""}
+                        onChange={(e) => changeField(key, e.target.value)}
+                        className={inputClasses}
+                      />
+                    ) : key === "body" ? (
+                      <textarea
+                        rows={3}
+                        value={fields[key] ?? ""}
+                        onChange={(e) => changeField(key, e.target.value)}
+                        className={inputClasses}
+                      />
+                    ) : (
+                      <input
+                        value={fields[key] ?? ""}
+                        onChange={(e) => changeField(key, e.target.value)}
+                        className={inputClasses}
+                      />
+                    )}
+                  </FormField>
+                ))}
+              </div>
+
+              {spec?.needs_photo && (
+                <p className="mt-3 text-xs leading-relaxed text-gray-500">
+                  This clearance prints a photo box and two thumbmark boxes. Attach the
+                  photograph on the certificate&rsquo;s own page; the thumbmarks are inked onto
+                  the printed sheet at the counter.
+                </p>
+              )}
+            </div>
+          )}
 
           <FormField label="Fee exemption">
             <label className="flex cursor-pointer items-center gap-2 text-sm text-dark">
@@ -666,7 +939,7 @@ export default function CertificateList() {
                 onChange={(e) => {
                   setExempt(e.target.checked);
                   if (e.target.checked) setFee("0");
-                  else setFee(String(FEES[certType] ?? 0));
+                  else setFee(String(feeFor(certType, purpose, fields)));
                 }}
                 className="h-4 w-4 accent-primary"
               />
@@ -737,8 +1010,8 @@ export default function CertificateList() {
                     onChange={(e) => setDetailType(e.target.value)}
                     className={inputClasses}
                   >
-                    {TYPES.map((t) => (
-                      <option key={t}>{t}</option>
+                    {(catalogue?.types ?? []).map((t) => (
+                      <option key={t.name}>{t.name}</option>
                     ))}
                   </select>
                 </FormField>
@@ -803,6 +1076,54 @@ export default function CertificateList() {
                 </div>
               ))}
             </dl>
+
+            {catalogue?.types.find((t) => t.name === detail.certificate_type)?.needs_photo && (
+              <div className="rounded-xl border border-gray/70 px-4 py-3">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-400">
+                  Counter photograph
+                </p>
+
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex h-[120px] w-[104px] shrink-0 items-center justify-center overflow-hidden rounded-lg border border-gray bg-secondary">
+                    {detail.photo_url ? (
+                      <img src={detail.photo_url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="px-2 text-center text-[11px] leading-tight text-gray-400">
+                        No photo yet
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    {detail.printed_at ? (
+                      <p className="text-xs leading-relaxed text-gray-500">
+                        Already printed, so the photograph is locked — the paper the resident
+                        holds and this record have to agree.
+                      </p>
+                    ) : (
+                      <>
+                        {/* The shared field, so this upload names the file it
+                            took and reports how far it has got — like every
+                            other upload in the system. */}
+                        <FileField
+                          file={photoFile}
+                          onPick={(file) => {
+                            setPhotoFile(file);
+                            if (file) void attachPhoto(detail, file);
+                          }}
+                          progress={photoUpload.progress}
+                          done={photoUpload.done}
+                        />
+                        <p className="mt-2 text-xs leading-relaxed text-gray-500">
+                          It prints in the box beside the thumbmarks. The thumbmarks themselves
+                          are inked onto the printed sheet here at the counter.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {(detail.requirements_checklist?.length ?? 0) > 0 && (
               <div className="rounded-xl border border-gray/70 px-4 py-3">

@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { FiSearch } from "react-icons/fi";
+import SearchInput from "./SearchInput";
 
 export interface Column<T> {
   header: string;
@@ -179,19 +179,12 @@ export default function DataTable<T>({
         // each about 110px wide, too narrow to read or to tap accurately.
         <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           {searchable && (
-            <div className="relative min-w-0 flex-1 sm:min-w-56">
-              <FiSearch
-                aria-hidden="true"
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
-              />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={searchPlaceholder}
-                aria-label="Search this list"
-                className="w-full rounded-full border border-gray bg-white py-2 pl-9 pr-4 text-sm text-dark outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/25"
-              />
-            </div>
+            <SearchInput
+              value={query}
+              onChange={setQuery}
+              placeholder={searchPlaceholder}
+              className="flex-1 sm:min-w-56"
+            />
           )}
           {(filters ?? []).map((filter, index) => (
             <select

@@ -72,6 +72,13 @@ class LuponController extends BaseController
          * it through UTC would move a case filed on the 1st back onto the
          * last day of the month before.
          */
+        /*
+         * Counted BEFORE the window is applied, and after every other filter.
+         * "Today: 3" then means three of the cases the clerk is already
+         * looking at, not three in the register as a whole.
+         */
+        $periodCounts = DateWindow::counts($query, 'date_filed', dateOnly: true);
+
         $window = DateWindow::fromRequest($request);
         $window?->applyTo($query, 'date_filed', dateOnly: true);
 
@@ -83,6 +90,7 @@ class LuponController extends BaseController
         $payload = $cases->toArray();
         $payload['window'] = $window?->toArray();
         $payload['years'] = DateWindow::yearsFrom(LuponCase::min('date_filed'));
+        $payload['period_counts'] = $periodCounts;
 
         return $this->success($payload, 'Lupon cases retrieved');
     }

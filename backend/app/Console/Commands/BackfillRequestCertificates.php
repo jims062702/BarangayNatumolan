@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Http\Controllers\Api\CertificateController;
 use App\Http\Controllers\Api\ServiceRequestController;
 use App\Models\CertificateClearance;
+use App\Support\CertificateCatalogue;
 use App\Models\ServiceRequest;
 use Illuminate\Console\Command;
 
@@ -85,7 +86,7 @@ class BackfillRequestCertificates extends Command
                 'service_request_id' => $request->id,
                 'certificate_type' => $type,
                 'purpose' => $request->purpose ?: $type,
-                'fee_amount' => CertificateController::FEES[$type] ?? 0,
+                'fee_amount' => CertificateCatalogue::feeFor($type, $request->purpose) ?? 0,
                 'is_exempt' => false,
                 'status' => $status,
             ]);

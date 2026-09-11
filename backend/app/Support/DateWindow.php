@@ -152,6 +152,29 @@ final class DateWindow
         return CarbonImmutable::parse($wallClock, self::MANILA)->utc();
     }
 
+    /**
+     * How many rows fall in each window, for the picker itself.
+     *
+     * A row of periods with no numbers on them makes somebody click all six
+     * to find out where the work is. Counted here so the answer arrives with
+     * the page rather than after five more round trips.
+     *
+     * The query is cloned per window: counting on the passed builder would
+     * leave the caller's own query narrowed to whichever period ran last.
+     */
+    public static function counts($query, string $column, bool $dateOnly = false): array
+    {
+        $counts = ['all' => (clone $query)->count()];
+
+        foreach (self::PRESETS as $name) {
+            $counts[$name] = self::preset($name)
+                ->applyTo(clone $query, $column, $dateOnly)
+                ->count();
+        }
+
+        return $counts;
+    }
+
     /** What the page shows back, so the reader can see which window they got. */
     public function toArray(): array
     {

@@ -40,6 +40,13 @@ class VawcController extends BaseController
          * before it meets the column — a Manila day runs from 16:00 the
          * previous day in the stored values.
          */
+        /*
+         * Counted BEFORE the window is applied, and after every other filter.
+         * "Today: 3" then means three of the cases the clerk is already
+         * looking at, not three in the register as a whole.
+         */
+        $periodCounts = DateWindow::counts($query, 'report_date');
+
         $window = DateWindow::fromRequest($request);
         $window?->applyTo($query, 'report_date');
 
@@ -91,6 +98,7 @@ class VawcController extends BaseController
         $payload = $cases->toArray();
         $payload['window'] = $window?->toArray();
         $payload['years'] = DateWindow::yearsFrom(VawcCase::min('report_date'));
+        $payload['period_counts'] = $periodCounts;
 
         return $this->success($payload, 'VAWC cases retrieved');
     }
@@ -103,6 +111,7 @@ class VawcController extends BaseController
             // resident — only the survivor is. Blank means the survivor
             // reported it herself.
             'reported_by_name' => 'nullable|string|max:150',
+            'reported_by_resident_id' => 'nullable|exists:residents,id',
             'reported_by_relationship' => 'nullable|string|max:100',
             'reported_by_contact' => 'nullable|string|max:50',
             'violence_type' => 'required|in:Physical,Psychological,Economic,Sexual,Mixed',
@@ -247,7 +256,8 @@ class VawcController extends BaseController
 
     public function show(VawcCase $case)
     {
-        $case->load(['survivor:id,first_name,last_name,zone_purok,contact_number', 'dependents:id,first_name,middle_name,last_name,resident_number', 'officer:id,name', 'incidents', 'referrals', 'followups.recorder:id,name', 'documents.uploader:id,name']);
+        $case->load(['survivor:id,first_name,last_name,zone_purok,contact_number',
+            'reporter:id,resident_number,first_name,middle_name,last_name,suffix,record_type', 'dependents:id,first_name,middle_name,last_name,resident_number', 'officer:id,name', 'incidents', 'referrals', 'followups.recorder:id,name', 'documents.uploader:id,name']);
 
         VawcAccessLog::record($case->id, 'viewed', 'Full case viewed');
 
@@ -261,6 +271,7 @@ class VawcController extends BaseController
             // be deleted and re-filed — losing the whole audit trail with it.
             'survivor_id' => 'sometimes|exists:residents,id',
             'reported_by_name' => 'nullable|string|max:150',
+            'reported_by_resident_id' => 'nullable|exists:residents,id',
             'reported_by_relationship' => 'nullable|string|max:100',
             'reported_by_contact' => 'nullable|string|max:50',
             'violence_type' => 'in:Physical,Psychological,Economic,Sexual,Mixed',

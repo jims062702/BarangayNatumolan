@@ -21,12 +21,23 @@ import LifeStatusEditor from "../../components/LifeStatusEditor";
 import { MANUAL_SECTORS, isAgeSector } from "../../lib/sectors";
 import type { FamilyMember, Resident } from "../../types";
 
-/** Default portal password: Lastname + MMDDYY of birthdate (e.g. Cruz062702). */
+/**
+ * Default portal password: Lastname + MMYYYY — e.g. Gasang062002.
+ *
+ * A SECOND copy of User::defaultPortalPassword, which is why it is worth
+ * saying out loud: the two must agree, and for a while they did not. It was
+ * MMDDYY on both sides until the census stopped asking for a day — the
+ * register fills that in itself, so a password built from it was built from a
+ * number the resident had never seen.
+ */
 function defaultPortalPassword(lastName: string, birthdate?: string | null): string {
   if (!birthdate) return "";
-  const [y, m, d] = birthdate.slice(0, 10).split("-");
-  if (!y || !m || !d) return "";
-  return `${lastName}${m}${d}${y.slice(2)}`;
+
+  const [y, m] = birthdate.slice(0, 10).split("-");
+
+  if (!y || !m) return "";
+
+  return `${lastName.replace(/[^A-Za-z0-9]/g, "")}${m}${y}`;
 }
 
 function Row({ label, value }: { label: string; value?: string | null }) {

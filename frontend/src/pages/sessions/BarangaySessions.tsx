@@ -3,6 +3,7 @@ import { FiPlus, FiCheckCircle, FiEdit2, FiUsers } from "react-icons/fi";
 import { api } from "../../lib/api";
 import { useAuth } from "../../contexts/AuthContext";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
 import Card from "../../components/UI/Card";
 import PageHeader from "../../components/UI/PageHeader";
 import DataTable from "../../components/UI/DataTable";
@@ -88,6 +89,8 @@ export default function BarangaySessions() {
   const [period, setPeriod] = useState<Period>(ALL_TIME);
   const [windowLabel, setWindowLabel] = useState<string | null>(null);
   const [years, setYears] = useState<number[]>([]);
+  /* How many records each period holds, for the picker itself. */
+  const [periodCounts, setPeriodCounts] = useState<Record<string, number>>();
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Session | null>(null);
@@ -104,8 +107,15 @@ export default function BarangaySessions() {
   const [status, setStatus] = useState<"Draft" | "For Approval">("Draft");
   const [attendees, setAttendees] = useState<Attendee[]>([blankAttendee()]);
 
-  const load = () => {
-    setLoading(true);
+  /*
+   * `silent` is for the background timer.
+   *
+   * A refresh nobody asked for must not blank the page somebody is
+   * reading; a first load or a filter change should still say it is
+   * working. Same fetch, and only the announcement differs.
+   */
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     api
       .get("/sessions", { params: { page, ...periodParams(period) } })
       .then((r) => {
@@ -114,6 +124,7 @@ export default function BarangaySessions() {
         setTotal(r.data.data.total ?? 0);
         setWindowLabel(r.data.data.window?.label ?? null);
         setYears(r.data.data.years ?? []);
+        setPeriodCounts(r.data.data.period_counts);
       })
       .finally(() => setLoading(false));
   };
@@ -123,7 +134,15 @@ export default function BarangaySessions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, period]);
 
-  useAutoRefresh(load, REFRESH.staff);
+  useAutoRefresh(() => load(true), REFRESH.staff);
+
+  /*
+   * Somebody else's change, about a second after they make it.
+   *
+   * The timer above stays as a backstop: if the pulse cannot be
+   * reached the page is a few seconds stale rather than frozen.
+   */
+  usePulse("sessions", () => load(true));
 
   const changePeriod = (next: Period) => {
     setPeriod(next);
@@ -230,6 +249,7 @@ export default function BarangaySessions() {
         value={period}
         onChange={changePeriod}
         years={years}
+        counts={periodCounts}
         showing={windowLabel}
         count={total}
         noun="session"

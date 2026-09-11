@@ -8,7 +8,9 @@ use App\Models\Notification;
 use App\Models\Resident;
 use App\Models\ServiceRequest;
 use App\Support\SequenceNumber;
+use App\Support\CertificateCatalogue;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * Certificates & clearances.
@@ -26,16 +28,17 @@ use Illuminate\Http\Request;
 class CertificateController extends BaseController
 {
     /** Standard fee schedule per certificate type (₱). */
-    public const FEES = [
-        'Barangay Clearance' => 50,
-        'Certificate of Residency' => 30,
-        'Certificate of Indigency' => 0,
-        'First-Time Jobseeker' => 0,
-        'Certificate of Low or No Income' => 0,
-        'Business Barangay Clearance' => 200,
-        'Good Moral Character' => 50,
-        'Other' => 0,
-    ];
+    /*
+     * The schedule moved out, and changed shape on the way.
+     *
+     * This was eight types with one price each. The ordinance of 18 January
+     * 2020 does not work that way: a Barangay Clearance is ₱200 for a
+     * Mayor's Permit and ₱30 for local employment, and a business clearance
+     * runs ₱25 to ₱750 by the kind of business. A flat number per type could
+     * not express that however carefully the numbers were chosen.
+     *
+     * See App\Support\CertificateCatalogue.
+     */
 
     public function index(Request $request)
     {
@@ -188,8 +191,15 @@ class CertificateController extends BaseController
             'resident_id' => 'required|exists:residents,id',
             // Optional: when omitted this is a walk-in and we create the request.
             'service_request_id' => 'nullable|exists:service_requests,id',
-            'certificate_type' => 'required|string',
+            'certificate_type' => 'required|in:' . implode(',', CertificateCatalogue::typeNames()),
             'purpose' => 'required|string',
+            /*
+             * What the printed form asks for and the register does not know
+             * — the hour of a death, a partner's name, the work applied for.
+             * Free-form by key because the keys differ per type; the
+             * catalogue says which ones this type expects.
+             */
+            'template_fields' => 'nullable|array',
             // Which documentary requirements the applicant presented.
             'requirements_checklist' => 'nullable|array',
             'requirements_checklist.*.item' => 'required|string',
@@ -268,11 +278,22 @@ class CertificateController extends BaseController
                 ->update(['status' => 'In Progress', 'assigned_to' => auth()->id()]);
         }
 
-        // Fee is automatic from the type; exempt = free; explicit amount wins.
+        /*
+         * Fee follows the ordinance; exempt is free; an explicit amount wins.
+         *
+         * The type alone is not always enough to price it — a clearance is
+         * priced by its purpose and a business clearance by the kind of
+         * business — so the deciding answer is read out of the document's
+         * own fields, which is where the clerk just typed it.
+         */
         $isExempt = $validated['is_exempt'] ?? false;
+        $choice = $this->priceDecidingAnswer($validated['certificate_type'], $validated);
+
         $validated['fee_amount'] = $isExempt
             ? 0
-            : ($validated['fee_amount'] ?? (self::FEES[$validated['certificate_type']] ?? 0));
+            : ($validated['fee_amount']
+                ?? CertificateCatalogue::feeFor($validated['certificate_type'], $choice)
+                ?? 0);
 
         $validated['certificate_number'] = CertificateClearance::nextCertificateNumber();
         $validated['reference_number'] = CertificateClearance::nextReferenceNumber();
@@ -302,10 +323,85 @@ class CertificateController extends BaseController
         return $this->success($certificate, 'Certificate filed and now being processed', 201);
     }
 
-    /** Standard fee for a certificate type (used by the frontend to prefill). */
+    /**
+     * The photograph for a Barangay Clearance with Picture.
+     *
+     * Taken at the counter and uploaded. Refused once the document has been
+     * printed, for the same reason the wording is: after that, the paper in
+     * the resident's hand and the record here must agree.
+     *
+     * The two thumbmarks are NOT uploaded. They are inked onto the printed
+     * sheet, and a system that offered to capture them would be claiming to
+     * have witnessed something it did not.
+     */
+    public function uploadPhoto(Request $request, CertificateClearance $certificate)
+    {
+        if (! CertificateCatalogue::needsPhoto($certificate->certificate_type)) {
+            return $this->error(
+                'A ' . $certificate->certificate_type . ' does not carry a photograph. '
+                    . 'Change the type to "Barangay Clearance with Picture" first.',
+                422
+            );
+        }
+
+        if ($certificate->printed_at) {
+            return $this->error(
+                'This certificate has already been printed, so its photograph can no longer be changed.',
+                409
+            );
+        }
+
+        $request->validate(['photo' => 'required|image|max:5120']);
+
+        /* The one it replaces goes, rather than accumulating in storage. */
+        if ($certificate->photo_path) {
+            Storage::disk('public')->delete($certificate->photo_path);
+        }
+
+        $certificate->update([
+            'photo_path' => $request->file('photo')->store('certificate-photos', 'public'),
+        ]);
+
+        return $this->success(
+            $certificate->fresh(),
+            'Photograph attached. It prints in the box beside the thumbmarks.'
+        );
+    }
+
+    /**
+     * Which of the document's own answers sets its price.
+     *
+     * For most types nothing does and the fee is flat. For a clearance it is
+     * the purpose — which the form already asks for as its own column — and
+     * for a business clearance it is the kind of business, which lives in
+     * the template fields.
+     */
+    private function priceDecidingAnswer(string $type, array $data): ?string
+    {
+        $field = CertificateCatalogue::TYPES[$type]['fee_field'] ?? null;
+
+        if (! $field) {
+            return null;
+        }
+
+        return $field === 'purpose'
+            ? ($data['purpose'] ?? null)
+            : ($data['template_fields'][$field] ?? null);
+    }
+
+    /**
+     * The whole schedule and every form the barangay issues.
+     *
+     * One call rather than three: the counter screen needs the types, the
+     * questions each one asks, and all seventy-odd amounts at the same
+     * moment — it is filling in one form.
+     */
     public function feeSchedule()
     {
-        return $this->success(self::FEES, 'Certificate fee schedule');
+        return $this->success(
+            CertificateCatalogue::forClient(),
+            'Certificate catalogue and the fee schedule of Ordinance of 18 January 2020'
+        );
     }
 
     /**
@@ -369,16 +465,32 @@ class CertificateController extends BaseController
         }
 
         $validated = $request->validate([
-            'certificate_type' => 'sometimes|in:' . implode(',', array_keys(self::FEES)),
+            'certificate_type' => 'sometimes|in:' . implode(',', CertificateCatalogue::typeNames()),
             'purpose' => 'sometimes|string|max:255',
+            'template_fields' => 'nullable|array',
         ]);
 
-        $typeChanged = isset($validated['certificate_type'])
-            && $validated['certificate_type'] !== $certificate->certificate_type;
+        /*
+         * The purpose moves the price too, not only the type — correcting
+         * "Loan Purposes" to "Mayor's Permit" is a ₱160 correction. Repricing
+         * only on a type change left the old amount on the record.
+         */
+        $reprice = (isset($validated['certificate_type'])
+                && $validated['certificate_type'] !== $certificate->certificate_type)
+            || (isset($validated['purpose']) && $validated['purpose'] !== $certificate->purpose);
 
-        // The fee follows the type, unless the applicant is fee-exempt.
-        if ($typeChanged && !$certificate->is_exempt) {
-            $validated['fee_amount'] = self::FEES[$validated['certificate_type']] ?? 0;
+        if ($reprice && ! $certificate->is_exempt) {
+            $type = $validated['certificate_type'] ?? $certificate->certificate_type;
+
+            $validated['fee_amount'] = CertificateCatalogue::feeFor(
+                $type,
+                $this->priceDecidingAnswer($type, [
+                    'purpose' => $validated['purpose'] ?? $certificate->purpose,
+                    'template_fields' => $validated['template_fields']
+                        ?? $certificate->template_fields
+                        ?? [],
+                ])
+            ) ?? 0;
         }
 
         $certificate->update($validated);

@@ -5,7 +5,15 @@ import { useAuth, homePathFor } from "../../contexts/AuthContext";
 import { api, errorMessage } from "../../lib/api";
 import { inputClasses } from "../../components/UI/FormField";
 import logo from "../../assets/logo/logo.svg";
-import sideImage from "../../assets/images/hero-1.svg";
+/*
+ * Bundled rather than pulled from /storage.
+ *
+ * This is the page somebody opens when the rest of the system is not
+ * working. A background served by the API disappears exactly when the API
+ * does — and the same photo lives in the hero slides, where an SK admin can
+ * delete it without ever knowing the sign-in page was leaning on it.
+ */
+import sideImage from "../../assets/images/barangay-officials.jpg";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -21,6 +29,17 @@ export default function LoginPage() {
    */
   const [activation, setActivation] = useState<{ email: string } | null>(null);
   const [code, setCode] = useState("");
+
+  /*
+   * The forgotten-password detour.
+   *
+   * "ask" collects the address, "code" collects what was emailed plus the new
+   * password. Null is the ordinary sign-in form.
+   */
+  const [forgot, setForgot] = useState<"ask" | "code" | "set" | null>(null);
+  const [resetCode, setResetCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newPasswordAgain, setNewPasswordAgain] = useState("");
   const { login, activate } = useAuth();
   const navigate = useNavigate();
 
@@ -89,19 +108,148 @@ export default function LoginPage() {
     setNotice("");
   };
 
+  /**
+   * Ask for a code.
+   *
+   * The reply is the same whether or not the address is on file — the server
+   * makes sure of that — so this cannot be used to find out who has an
+   * account, and the message here must not undo it by saying more.
+   */
+  const askForCode = async (e: FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await api.post("/auth/forgot-password", { email });
+      setNotice(response.data.message);
+      setForgot("code");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /**
+   * The code alone, before any password is chosen.
+   *
+   * The row is not consumed by this — the code is checked again when the
+   * password is actually set, so getting past this screen is not on its own
+   * permission to change anything.
+   */
+  const checkCode = async (e: FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+
+    try {
+      await api.post("/auth/verify-reset-code", { email, code: resetCode.trim() });
+      setNotice("");
+      setForgot("set");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const useCode = async (e: FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+
+    try {
+      await api.post("/auth/reset-password", {
+        email,
+        code: resetCode.trim(),
+        password: newPassword,
+        password_confirmation: newPasswordAgain,
+      });
+
+      /* Straight back to signing in, with the address already filled and the
+         new password to type — which is the thing that proves it worked. */
+      setForgot(null);
+      setResetCode("");
+      setNewPassword("");
+      setNewPasswordAgain("");
+      setPassword("");
+      setNotice("Your password has been changed. Sign in with it now.");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const leaveForgot = () => {
+    setForgot(null);
+    /* A password left visible on the way out would still be visible on the
+       sign-in form, which is a different screen and possibly a different
+       person at the counter. */
+    setShowPassword(false);
+    setError("");
+    setNotice("");
+    setResetCode("");
+    setNewPassword("");
+    setNewPasswordAgain("");
+  };
+
   return (
     <div className="flex min-h-screen bg-white">
       {/* Left — barangay imagery (hidden on small screens) */}
-      <div className="relative hidden w-1/2 lg:block">
+      {/*
+        overflow-hidden, because the backdrop is scaled up and blurred.
+
+        A 40px blur spreads well past the edge of the element it is on,
+        and scale-110 pushes it further still — so without this the
+        colour smeared out over the white half of the page. Nothing
+        clipped it: the panel is only `relative`.
+      */}
+      <div className="relative hidden w-1/2 overflow-hidden lg:block">
+        {/*
+          Two copies of the one photo, and only one of them is meant to be
+          looked at.
+
+          The panel is half a wide screen — nearly square — and the photo is
+          landscape, so `object-cover` filled the box by cutting 14 to 20 per
+          cent off each SIDE. What it cut was the councillors standing at
+          either end: the barangay's own officials, absent from the barangay's
+          own sign-in page.
+
+          So the sharp copy is CONTAINED, whole, everybody in it. A blurred,
+          over-scaled copy fills the space that leaves, which under a
+          seventy-per-cent colour wash reads as texture rather than as a
+          letterbox. The file is fetched once and drawn twice.
+        */}
         <img
           src={sideImage}
           alt=""
           aria-hidden="true"
-          className="absolute inset-0 h-full w-full object-cover"
+          className="absolute inset-0 h-full w-full scale-110 object-cover blur-2xl"
+        />
+        <img
+          src={sideImage}
+          alt=""
+          aria-hidden="true"
+          className="absolute inset-0 h-full w-full object-contain"
+        />
+        {/*
+          Two layers, because they do two jobs.
+
+          The brand wash is the look — the same purple-into-magenta the landing
+          page puts over this photo. The scrim underneath the text is legibility:
+          the wash alone thins out towards the bottom right, and the heading sits
+          over faces and a bright pink shirt rather than over flat colour.
+        */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 bg-gradient-to-br from-primary-dark/90 via-primary/80 to-fuchsia-600/70"
         />
         <div
           aria-hidden="true"
-          className="absolute inset-0 bg-gradient-to-br from-primary-dark/90 via-primary/75 to-primary-light/60"
+          className="absolute inset-0 bg-gradient-to-t from-primary-dark/70 via-primary-dark/20 to-transparent"
         />
         <div className="relative z-10 flex h-full flex-col justify-between p-12">
           <Link
@@ -119,14 +267,16 @@ export default function LoginPage() {
             <p className="mt-3 max-w-md text-lg font-light text-white/90">
               Management Information System
             </p>
-            <p className="mt-6 max-w-sm text-sm leading-relaxed text-white/75">
+            {/* white/90, not /75: measured at 4.3:1 over the photo, which is under
+                AA. The flat illustration this replaced was darker here. */}
+            <p className="mt-6 max-w-sm text-sm leading-relaxed text-white/90">
               One system for certificates, requests, appointments, and barangay
               services — serving every Natumolanon with transparency, unity,
               and excellence.
             </p>
           </div>
 
-          <p className="text-xs text-white/60">
+          <p className="text-xs text-white/80">
             Tagoloan · Misamis Oriental · Philippines
           </p>
         </div>
@@ -234,6 +384,182 @@ export default function LoginPage() {
                 </button>
               </div>
             </form>
+          ) : forgot === "ask" ? (
+            <form onSubmit={askForCode} className="mt-6 space-y-5">
+              <p className="text-sm leading-relaxed text-gray-500">
+                Type the email on your account and we will send a 6-digit code
+                to it. If you cannot reach that inbox, the Barangay Population
+                Office can set a password for you at the counter.
+              </p>
+
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-dark">Email</span>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className={inputClasses}
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  autoFocus
+                  required
+                />
+              </label>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full cursor-pointer rounded-full bg-primary py-3 text-sm font-semibold text-white shadow-lg shadow-primary/30 transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loading ? "Sending…" : "Send me a code"}
+              </button>
+
+              <button
+                type="button"
+                onClick={leaveForgot}
+                className="w-full cursor-pointer text-xs font-medium text-gray-500 hover:text-dark"
+              >
+                Back to sign in
+              </button>
+            </form>
+          ) : forgot === "code" ? (
+            /* Step two: the code, and nothing else. */
+            <form onSubmit={checkCode} className="mt-6 space-y-5">
+              <div className="flex items-start gap-3 rounded-2xl border border-gray bg-secondary/60 px-4 py-3 text-sm leading-relaxed text-gray-600">
+                <FiMail aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+                <span>
+                  We emailed a 6-digit code to <strong className="text-dark">{email}</strong>.
+                  Enter it to continue.
+                </span>
+              </div>
+
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-dark">
+                  Verification code
+                </span>
+                <input
+                  value={resetCode}
+                  onChange={(e) => setResetCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  className={`${inputClasses} text-center font-mono text-2xl tracking-[0.5em]`}
+                  placeholder="000000"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  required
+                />
+              </label>
+
+              <button
+                type="submit"
+                disabled={loading || resetCode.length < 6}
+                className="w-full cursor-pointer rounded-full bg-primary py-3 text-sm font-semibold text-white shadow-lg shadow-primary/30 transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loading ? "Checking…" : "Continue"}
+              </button>
+
+              <div className="flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  onClick={() => setForgot("ask")}
+                  className="cursor-pointer font-semibold text-primary hover:underline"
+                >
+                  Send another code
+                </button>
+                <button
+                  type="button"
+                  onClick={leaveForgot}
+                  className="cursor-pointer font-medium text-gray-500 hover:text-dark"
+                >
+                  Back to sign in
+                </button>
+              </div>
+            </form>
+          ) : forgot === "set" ? (
+            /* Step three, reached only with a code that checked out. */
+            <form onSubmit={useCode} className="mt-6 space-y-5">
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-dark">New password</span>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className={`${inputClasses} pr-12`}
+                    placeholder="At least 8 characters"
+                    autoComplete="new-password"
+                    minLength={8}
+                    autoFocus
+                    required
+                  />
+                  {/*
+                    One switch for both boxes.
+
+                    Somebody choosing a password they have never typed before
+                    needs to see it, and two separate eyes on two boxes that
+                    must match is one control too many.
+                  */}
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((s) => !s)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    title={showPassword ? "Hide password" : "Show password"}
+                    className="absolute right-1.5 top-1/2 flex h-9 w-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-primary/10 hover:text-primary"
+                  >
+                    {showPassword ? <FiEyeOff className="h-5 w-5" /> : <FiEye className="h-5 w-5" />}
+                  </button>
+                </div>
+              </label>
+
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-dark">
+                  New password again
+                </span>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={newPasswordAgain}
+                    onChange={(e) => setNewPasswordAgain(e.target.value)}
+                    className={`${inputClasses} pr-12`}
+                    autoComplete="new-password"
+                    minLength={8}
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((s) => !s)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    title={showPassword ? "Hide password" : "Show password"}
+                    className="absolute right-1.5 top-1/2 flex h-9 w-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-primary/10 hover:text-primary"
+                  >
+                    {showPassword ? <FiEyeOff className="h-5 w-5" /> : <FiEye className="h-5 w-5" />}
+                  </button>
+                </div>
+                {/* Said as they type, not after they submit. */}
+                {newPasswordAgain !== "" && newPassword !== newPasswordAgain && (
+                  <span className="mt-1.5 block text-xs font-medium text-danger">
+                    The two passwords do not match.
+                  </span>
+                )}
+              </label>
+
+              <button
+                type="submit"
+                disabled={
+                  loading || newPassword.length < 8 || newPassword !== newPasswordAgain
+                }
+                className="w-full cursor-pointer rounded-full bg-primary py-3 text-sm font-semibold text-white shadow-lg shadow-primary/30 transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loading ? "Saving…" : "Set my new password"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setForgot("code")}
+                className="w-full cursor-pointer text-xs font-medium text-gray-500 hover:text-dark"
+              >
+                Back to the code
+              </button>
+            </form>
           ) : (
             <form onSubmit={handleSubmit} className="mt-6 space-y-5">
               <label className="block">
@@ -280,6 +606,23 @@ export default function LoginPage() {
               >
                 {loading ? "Signing in…" : "Sign In"}
               </button>
+
+              {/*
+                Under the button, where somebody looks after it has not worked.
+                A quiet link rather than a second button: it is the way out of
+                a problem, not a second thing to choose between.
+              */}
+              <button
+                type="button"
+                onClick={() => {
+                  setForgot("ask");
+                  setError("");
+                  setNotice("");
+                }}
+                className="w-full cursor-pointer text-xs font-semibold text-primary hover:underline"
+              >
+                Forgot your password?
+              </button>
             </form>
           )}
 
@@ -289,8 +632,9 @@ export default function LoginPage() {
               <p className="mt-1">
                 Your account is created for you when the Barangay Population Office registers you —
                 you do not need to sign up. Sign in with the email on your record; your password is
-                your <strong>last name followed by your birthday</strong> in MMDDYY form, for
-                example <span className="font-mono">Cruz062702</span>. The first time you sign in we
+                your <strong>last name followed by the month and year you were
+                born</strong> — for example <span className="font-mono">Gasang062002</span> for
+                somebody named Gasang born in June 2002. The first time you sign in we
                 will email you a 6-digit code to confirm the account is yours.
               </p>
             </div>

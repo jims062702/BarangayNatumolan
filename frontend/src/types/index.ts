@@ -266,6 +266,12 @@ export interface Certificate {
   service_request?: { id: number; request_type: "Walk-in" | "Online" } | null;
   certificate_type: string;
   purpose?: string | null;
+  /* What the printed form asks for and the register does not know — the hour
+     of a death, a partner's name, the work applied for. Keys differ per type;
+     CertificateCatalogue on the server says which each one expects. */
+  template_fields?: Record<string, string> | null;
+  /* The counter photograph, on the clearance that prints one. */
+  photo_url?: string | null;
   /** Documentary requirements and whether each was presented at filing. */
   requirements_checklist?: { item: string; presented: boolean }[] | null;
   fee_amount: string | number;
@@ -309,6 +315,17 @@ export interface ChatConversation {
   last_message_at?: string | null;
   created_at?: string;
   closed_at?: string | null;
+
+  /*
+   * A resident who came back after this was closed, and how often.
+   *
+   * Once is somebody who forgot to ask something. Four times is a matter the
+   * desk keeps closing without settling — which nothing else on the row says.
+   */
+  follow_up_count?: number;
+  reopened_at?: string | null;
+  /** When it was last closed, so the agent knows the gap they are answering across. */
+  last_closed_at?: string | null;
 }
 
 export interface ChatMessage {
@@ -346,6 +363,17 @@ export interface Appointment {
   ended_at?: string | null;
   minutes?: string | null;
   minuted_at?: string | null;
+
+  /*
+   * A visitor the register has never heard of.
+   *
+   * One of `resident` or `guest_name` is always set. A guest has no record to
+   * look a phone number up in, which is why theirs travels with the row.
+   */
+  guest_name?: string | null;
+  guest_email?: string | null;
+  guest_contact?: string | null;
+  purpose?: string | null;
 }
 
 /**

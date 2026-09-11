@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { FiAlertTriangle, FiCheckCircle, FiClock, FiShield } from "react-icons/fi";
 import { api } from "../../lib/api";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
 import { FiEye } from "react-icons/fi";
 import RowAction, { RowActions } from "../../components/UI/RowAction";
 import Card from "../../components/UI/Card";
@@ -36,8 +37,15 @@ export default function VawcFollowups() {
   const [dueOnly, setDueOnly] = useState(false);
   const [viewing, setViewing] = useState<VawcFollowup | null>(null);
 
-  const load = () => {
-    setLoading(true);
+  /*
+   * `silent` is for the background timer.
+   *
+   * A refresh nobody asked for must not blank the page somebody is
+   * reading; a first load or a filter change should still say it is
+   * working. Same fetch, and only the announcement differs.
+   */
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     api
       .get("/vawc/followups", { params: { page, due: dueOnly ? 1 : undefined } })
       .then((r) => {
@@ -53,7 +61,15 @@ export default function VawcFollowups() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, dueOnly]);
 
-  useAutoRefresh(load, REFRESH.staff);
+  useAutoRefresh(() => load(true), REFRESH.staff);
+
+  /*
+   * Somebody else's change, about a second after they make it.
+   *
+   * The timer above stays as a backstop: if the pulse cannot be
+   * reached the page is a few seconds stale rather than frozen.
+   */
+  usePulse("vawc_cases", () => load(true));
 
   // Counted over the loaded page — the tiles summarise what is on screen.
   const atRisk = rows.filter((f) => ["At Risk", "Critical"].includes(f.safety_status)).length;

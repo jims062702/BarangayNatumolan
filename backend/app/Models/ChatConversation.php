@@ -24,6 +24,11 @@ class ChatConversation extends Model
         'assigned_to',
         'claimed_at',
         'closed_at',
+
+        /* Set when a resident picks a finished conversation back up. */
+        'follow_up_count',
+        'reopened_at',
+        'last_closed_at',
         'last_message_at',
         'unread_for_agent',
         'unread_for_visitor',
@@ -47,6 +52,9 @@ class ChatConversation extends Model
             'unread_for_visitor' => 'integer',
             'claimed_at' => 'datetime',
             'closed_at' => 'datetime',
+            'follow_up_count' => 'integer',
+            'reopened_at' => 'datetime',
+            'last_closed_at' => 'datetime',
             'last_message_at' => 'datetime',
         ];
     }

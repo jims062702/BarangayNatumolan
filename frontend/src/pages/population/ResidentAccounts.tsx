@@ -3,14 +3,29 @@ import { api, errorMessage } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { confirmAction } from "../../lib/confirm";
 import { useAutoRefresh, REFRESH } from "../../hooks/useAutoRefresh";
+import { usePulse } from "../../hooks/usePulse";
 import Card from "../../components/UI/Card";
 import DataTable from "../../components/UI/DataTable";
 import PageHeader from "../../components/UI/PageHeader";
-import { inputClasses } from "../../components/UI/FormField";
+import FormField, { inputClasses } from "../../components/UI/FormField";
+import Modal from "../../components/UI/Modal";
 import type { User } from "../../types";
+import SearchInput from "../../components/UI/SearchInput";
 
 export default function ResidentAccounts() {
   const [rows, setRows] = useState<User[]>([]);
+
+  /*
+   * Setting a password at the counter.
+   *
+   * For the resident who cannot get at the email on their record — a changed
+   * number, a shared inbox, a phone that is gone. No code is sent: the person
+   * is standing there, and the counter has already identified them.
+   */
+  const [resetting, setResetting] = useState<User | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [newPasswordAgain, setNewPasswordAgain] = useState("");
+  const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   // "Not activated" is the list this office actually works: those accounts
   // exist but nobody has proved the mailbox behind them is theirs.
@@ -28,8 +43,15 @@ export default function ResidentAccounts() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
 
-  const load = () => {
-    setLoading(true);
+  /*
+   * `silent` is for the background timer.
+   *
+   * A refresh nobody asked for must not blank the page somebody is
+   * reading; a first load or a filter change should still say it is
+   * working. Same fetch, and only the announcement differs.
+   */
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     api
       .get("/population/accounts", {
         params: { page, search: search || undefined, activation: activation || undefined },
@@ -50,7 +72,15 @@ export default function ResidentAccounts() {
   }, [page, search, activation]);
 
   // Live updates without a manual refresh.
-  useAutoRefresh(load, REFRESH.staff);
+  useAutoRefresh(() => load(true), REFRESH.staff);
+
+  /*
+   * Somebody else's change, about a second after they make it.
+   *
+   * The timer above stays as a backstop: if the pulse cannot be
+   * reached the page is a few seconds stale rather than frozen.
+   */
+  usePulse("users", () => load(true));
 
   /** "I never got the email" — sends the resident a fresh activation code. */
   const resend = async (user: User) => {
@@ -59,6 +89,29 @@ export default function ResidentAccounts() {
       toast(response.data.message);
     } catch (err) {
       toast(errorMessage(err), "error");
+    }
+  };
+
+  const setCounterPassword = async () => {
+    if (!resetting) return;
+
+    setSaving(true);
+
+    try {
+      await api.post(`/population/accounts/${resetting.id}/reset-password`, {
+        password: newPassword,
+        password_confirmation: newPasswordAgain,
+      });
+
+      toast(`Password set for ${resetting.name}. Tell them to sign in with it now.`);
+      setResetting(null);
+      setNewPassword("");
+      setNewPasswordAgain("");
+      load();
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -92,15 +145,15 @@ export default function ResidentAccounts() {
 
       <Card>
         <div className="mb-4 flex flex-wrap items-center gap-3">
-          <input
+          <SearchInput
             value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
+            onChange={(value) => {
+              setSearch(value);
               setPage(1);
             }}
-            className={`${inputClasses} max-w-sm`}
             placeholder="Search name or email…"
-            aria-label="Search resident accounts"
+            label="Search resident accounts"
+            className="max-w-sm flex-1"
           />
           <div className="flex gap-2">
             {(
@@ -180,6 +233,18 @@ export default function ResidentAccounts() {
                   )}
                   <button
                     type="button"
+                    onClick={() => {
+                      setResetting(u);
+                      setNewPassword("");
+                      setNewPasswordAgain("");
+                    }}
+                    className="cursor-pointer rounded-full border border-gray px-3 py-1 text-xs font-semibold text-dark transition-colors hover:border-primary hover:text-primary"
+                    title="Set a password at the counter, for a resident who cannot reach their email"
+                  >
+                    Set password
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => toggle(u)}
                     className={`cursor-pointer rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                       u.is_active
@@ -204,6 +269,76 @@ export default function ResidentAccounts() {
           onPageChange={setPage}
         />
       </Card>
+
+      <Modal
+        open={resetting !== null}
+        onClose={() => setResetting(null)}
+        title={resetting ? `Set a password for ${resetting.name}` : "Set a password"}
+      >
+        <div className="space-y-5 p-5">
+          {/*
+            Said before the fields, not after.
+
+            Two things a clerk needs to know before typing: they will have to
+            say this out loud, and doing it ends whatever session the resident
+            has open — which is the point when a phone has been lost, and a
+            surprise when it has not.
+          */}
+          <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm leading-relaxed text-dark">
+            No code is sent for this. Type a password, tell the resident what it
+            is, and ask them to change it from their profile once they are in.
+            They will be signed out of any device they are currently using.
+          </div>
+
+          <FormField label="New password" hint="At least 8 characters">
+            <input
+              type="text"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className={inputClasses}
+              minLength={8}
+              autoComplete="off"
+              autoFocus
+            />
+          </FormField>
+
+          <FormField label="Type it again">
+            <input
+              type="text"
+              value={newPasswordAgain}
+              onChange={(e) => setNewPasswordAgain(e.target.value)}
+              className={inputClasses}
+              minLength={8}
+              autoComplete="off"
+            />
+            {newPasswordAgain !== "" && newPassword !== newPasswordAgain && (
+              <span className="mt-1.5 block text-xs font-medium text-danger">
+                The two do not match.
+              </span>
+            )}
+          </FormField>
+
+          <div className="flex justify-end gap-3 border-t border-gray pt-4">
+            <button
+              type="button"
+              onClick={() => setResetting(null)}
+              className="cursor-pointer rounded-full border border-gray px-5 py-2.5 text-sm font-semibold text-dark transition hover:border-primary/50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={setCounterPassword}
+              disabled={
+                saving || newPassword.length < 8 || newPassword !== newPasswordAgain
+              }
+              className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark disabled:opacity-60"
+            >
+              {saving ? "Saving…" : "Set this password"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

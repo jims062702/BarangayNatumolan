@@ -70,8 +70,15 @@ export default function AdministrativeRecords() {
 
   const [viewing, setViewing] = useState<AdministrativeRecord | null>(null);
 
-  const load = () => {
-    setLoading(true);
+  /*
+   * `silent` is for the background timer.
+   *
+   * A refresh nobody asked for must not blank the page somebody is
+   * reading; a first load or a filter change should still say it is
+   * working. Same fetch, and only the announcement differs.
+   */
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     api
       .get("/administrative-records", { params: { page, archived: showArchived ? 1 : 0 } })
       .then((r) => {
@@ -87,7 +94,7 @@ export default function AdministrativeRecords() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, showArchived]);
 
-  useAutoRefresh(load, REFRESH.staff);
+  useAutoRefresh(() => load(true), REFRESH.staff);
 
   const closeForm = () => {
     setFormOpen(false);
